@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import type pg from "pg";
 import { requireApiKey } from "./auth/api-keys.js";
+import { deliveryRoutes } from "./routes/deliveries.js";
 import { endpointRoutes } from "./routes/endpoints.js";
 import { eventRoutes } from "./routes/events.js";
 import { egressPolicyFromEnv, type EgressPolicy, type Resolver } from "./security/ssrf.js";
@@ -9,6 +10,8 @@ export interface AppOptions {
   pool: pg.Pool;
   authDisabled?: boolean;
   logger?: boolean;
+  // Called when deliveries become due now: new events and replays. The
+  // server wires it to worker.wake() so the worker stops sleeping.
   onDeliveriesCreated?: () => void;
   egressPolicy?: EgressPolicy;
   resolve?: Resolver;
@@ -32,5 +35,6 @@ export async function buildApp(opts: AppOptions) {
     resolve: opts.resolve,
   });
   await app.register(eventRoutes, { pool, onDeliveriesCreated: opts.onDeliveriesCreated });
+  await app.register(deliveryRoutes, { pool, onDeliveriesDue: opts.onDeliveriesCreated });
   return app;
 }

@@ -38,12 +38,25 @@ export async function eventRoutes(
       );
 
       if (inserted.length === 0) {
-        // Duplicate key: the event already exists; fetch and return its id.
-        const { rows: existing } = await client.query<{ id: string }>(
-          `SELECT id FROM events WHERE idempotency_key = $1`,
-          [idempotencyKey]
+        // Duplicate key: the event already exists. A retry of the same
+        // request gets the original event id. The same key with a different
+        // body is a client bug (say, a key reused across orders); returning
+        // the old id would silently drop the new event, so refuse it, as
+        // Stripe does. jsonb equality ignores key order and whitespace, so
+        // only a real difference in content counts.
+        const { rows: existing } = await client.query<{ id: string; same: boolean }>(
+          `SELECT id, (type = $2 AND payload = $3::jsonb) AS same
+           FROM events WHERE idempotency_key = $1`,
+          [idempotencyKey, type, payload]
         );
         await client.query("COMMIT");
+        if (!existing[0].same) {
+          return reply.code(422).send({
+            error:
+              "Idempotency-Key was already used with a different request body; " +
+              "use a new key for a new event",
+          });
+        }
         return reply.code(200).send({ event_id: existing[0].id });
       }
 
