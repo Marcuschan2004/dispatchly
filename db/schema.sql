@@ -14,7 +14,10 @@ CREATE TABLE endpoints (
 CREATE TABLE endpoint_secrets (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   endpoint_id  UUID NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
-  secret       TEXT NOT NULL,                 -- whsec_<base64>, Standard Webhooks format
+  -- The whsec_ secret, AES-256-GCM encrypted: nonce || ciphertext || tag.
+  -- See src/security/encryption.ts. Plaintext never reaches the database.
+  secret_encrypted    BYTEA NOT NULL CHECK (octet_length(secret_encrypted) > 28),
+  secret_key_version  INT NOT NULL,            -- which encryption key; 0 = local dev key
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at   TIMESTAMPTZ                    -- NULL = no expiry (current secret)
 );

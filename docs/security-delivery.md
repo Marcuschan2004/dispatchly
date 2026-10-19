@@ -228,11 +228,44 @@ live secret.
    switch.
 6. Delete expired rows in the worker's housekeeping loop.
 
-**Encryption at rest.** HMAC needs the raw secret, so it cannot be hashed like
-a password. Encrypt it with AES-256-GCM (`node:crypto`) under a key from an
-environment variable, and store a key version so that key can rotate too.
-Limit: on a free host the key sits next to the database URL, so this protects
-against a leaked backup or SQL dump, not a full server compromise.
+**Encryption at rest (built).** HMAC needs the raw secret, so it cannot be
+hashed like an API key; storage has to be reversible. `src/security/encryption.ts`:
+
+1. AES-256-GCM from `node:crypto`, key from `SECRETS_ENCRYPTION_KEY` (base64
+   of exactly 32 bytes; the value is round-tripped so a typo is an error, not
+   a silently different key).
+2. A fresh 12-byte random nonce per encryption. GCM breaks badly if a nonce
+   repeats under one key (it leaks the XOR of the plaintexts and allows tag
+   forgery); random 96-bit nonces are safe far past this table's size.
+3. Stored as one `BYTEA`, `nonce || ciphertext || tag`, plus
+   `secret_key_version INT`. The version is a column so the database can
+   answer "which rows still use the old key" during a key rotation.
+4. The endpoint id is GCM's additional authenticated data. Someone with
+   write access to the database can't copy one endpoint's ciphertext onto
+   another endpoint's row; it fails to decrypt. That is why the create route
+   now picks the endpoint id in the app instead of the database.
+5. The worker loads ciphertexts in its claim query and decrypts in `send()`,
+   so a bad row fails that one attempt with a recorded error and nothing is
+   sent unsigned.
+6. Startup: the API and worker refuse to start without a valid key unless
+   `HOST` is loopback (the same rule as `AUTH_DISABLED`), where they use a
+   public dev key with version 0. Then they decrypt one row per key version
+   and refuse to start if that fails, so a wrong key is one clear error
+   instead of every delivery slowly dead-lettering.
+7. Migration: `npm run encrypt-secrets` adds the columns, encrypts every
+   plaintext row and drops the plaintext column in one transaction, then runs
+   `VACUUM FULL`. `DROP COLUMN` only hides a column and each `UPDATE` leaves
+   the old row version behind, so without the rewrite the plaintext stays in
+   the table's data file.
+
+Limits: on a free host the key sits next to the database URL, so this
+protects against a leaked backup, SQL dump or read-only database
+credential, not a full server compromise. A KMS would move the key off the
+host and is out of scope. The migration cannot reach backups or WAL written
+before it ran, so secrets that were ever stored in plaintext should be
+rotated. Rotating the encryption key itself is not built: it needs the old
+key accepted for decryption and a command that re-encrypts rows below the
+current version.
 
 **Threat.** A secret leaks (logged by a receiver, committed to a repo, a dump
 of the database). Without rotation it stays valid forever. If rotation needs
@@ -250,6 +283,13 @@ same outcome.
   afterwards.
 - `GET /endpoints` and logs never contain `whsec_` (grep the test log
   output).
+- `test/encryption.test.ts`: after creating and rotating secrets, neither the
+  rows nor the table's data file on disk (read with `pg_read_binary_file`
+  after a `CHECKPOINT`) contains any secret as `whsec_` text, base64 or raw
+  key bytes. The same probe finds the plaintext in a pre-encryption table, and
+  finds nothing after the migration.
+- Tampering with any byte of the nonce, ciphertext or tag, moving a
+  ciphertext to another endpoint, or using the wrong key fails to decrypt.
 
 ## 5. Compared with Stripe and Standard Webhooks
 
@@ -298,7 +338,8 @@ Build the pure, testable pieces first, so the worker only calls them.
    64 KB response cap.
 4. Rotation: the partial unique index in `db/schema.sql`, the rotate route,
    expired-secret cleanup.
-5. Secrets encrypted at rest, with a migration that encrypts existing rows.
+5. Secrets encrypted at rest, with a migration that encrypts existing rows
+   (built).
 6. Receiver example (`examples/receiver.ts`) using the official library plus a
    `processed_webhooks` table, and the curl replay demo.
 7. `THREAT_MODEL.md`: the summary table, the two attackers, and what each
@@ -327,3 +368,11 @@ receivers, and a cloud KMS for the encryption key.
   index guarantees one current secret.
 - **Why encrypt secrets instead of hashing them?** HMAC needs the raw key, so
   storage must be reversible.
+- **Why GCM and not AES-CBC?** GCM is authenticated: a modified ciphertext
+  fails to decrypt instead of decrypting to garbage the code then trusts.
+  CBC would need a separate HMAC to get that.
+- **Why a random nonce per secret?** Reusing a GCM nonce under the same key
+  leaks the XOR of the two plaintexts and lets an attacker forge tags.
+- **What does encryption at rest actually protect?** A leaked dump, backup
+  or read-only database credential. Not a compromised server, because the key
+  is in the same environment as the database URL.

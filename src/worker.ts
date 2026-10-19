@@ -4,8 +4,11 @@
 // WORKER_MAX_IDLE_MS low (e.g. 1000) for snappy pickup of new events.
 import { pool } from "./db.js";
 import { DeliveryWorker, workerConfigFromEnv } from "./delivery/worker.js";
+import { checkSecretsReadable, secretCipherFromEnv } from "./security/encryption.js";
 
-const worker = new DeliveryWorker(pool, workerConfigFromEnv());
+const cipher = secretCipherFromEnv();
+await checkSecretsReadable(pool, cipher);
+const worker = new DeliveryWorker(pool, workerConfigFromEnv(), { cipher });
 worker.start();
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

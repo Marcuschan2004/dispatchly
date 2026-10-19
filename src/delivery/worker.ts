@@ -11,6 +11,7 @@ import {
   type Resolver,
 } from "../security/ssrf.js";
 import { MAX_LIVE_SECRETS } from "../security/secrets.js";
+import { secretCipherFromEnv, type SecretCipher } from "../security/encryption.js";
 import { backoffDelayMs, parseRetryAfterMs } from "./backoff.js";
 import { signatureHeader } from "../security/signing.js";
 
@@ -71,7 +72,10 @@ interface Job {
   payload: unknown;
   event_created_at: Date;
   url: string;
-  secrets: string[];
+  endpoint_id: string;
+  // Still encrypted; decrypted in send(), so a key problem fails one attempt
+  // with a recorded error instead of the whole batch.
+  secrets: { encrypted: string; key_version: number }[];
 }
 
 interface SendResult {
@@ -90,6 +94,7 @@ export class DeliveryWorker {
   private readonly egressPolicy: EgressPolicy;
   private readonly dispatcher: Dispatcher;
   private readonly log: Logger;
+  private readonly cipher: SecretCipher;
   private stopping = false;
   private loop: Promise<void> | null = null;
   private woken = false;
@@ -104,12 +109,14 @@ export class DeliveryWorker {
       // Tests inject DNS answers to simulate rebinding.
       resolve?: Resolver;
       log?: Logger;
+      cipher?: SecretCipher;
     } = {}
   ) {
     this.id = opts.id ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
     this.egressPolicy = opts.egressPolicy ?? egressPolicyFromEnv();
     this.dispatcher = createGuardedAgent(this.egressPolicy, { resolve: opts.resolve });
     this.log = opts.log ?? jsonLogger;
+    this.cipher = opts.cipher ?? secretCipherFromEnv();
   }
 
   start(): void {
@@ -239,12 +246,17 @@ export class DeliveryWorker {
        )
        SELECT c.id, c.claim_token, c.attempts AS attempt,
               e.id AS event_id, e.type AS event_type, e.payload,
-              e.created_at AS event_created_at, ep.url,
-              ARRAY(SELECT s.secret FROM endpoint_secrets s
-                    WHERE s.endpoint_id = ep.id
-                      AND (s.expires_at IS NULL OR s.expires_at > now())
-                    ORDER BY s.created_at DESC
-                    LIMIT ${MAX_LIVE_SECRETS}) AS secrets
+              e.created_at AS event_created_at, ep.url, ep.id AS endpoint_id,
+              -- One json_agg keeps each ciphertext next to its key version.
+              (SELECT COALESCE(json_agg(json_build_object(
+                        'encrypted', encode(s.secret_encrypted, 'base64'),
+                        'key_version', s.secret_key_version)
+                      ORDER BY s.created_at DESC), '[]')
+               FROM (SELECT * FROM endpoint_secrets
+                     WHERE endpoint_id = ep.id
+                       AND (expires_at IS NULL OR expires_at > now())
+                     ORDER BY created_at DESC
+                     LIMIT ${MAX_LIVE_SECRETS}) s) AS secrets
        FROM claimed c
        JOIN events e ON e.id = c.event_id
        JOIN endpoints ep ON ep.id = c.endpoint_id`,
@@ -351,6 +363,12 @@ export class DeliveryWorker {
       const url = new URL(job.url);
       checkUrl(url, this.egressPolicy);
       if (job.secrets.length === 0) throw new Error("endpoint has no active signing secret");
+      const secrets = job.secrets.map((s) =>
+        this.cipher.decrypt(
+          { encrypted: Buffer.from(s.encrypted, "base64"), keyVersion: s.key_version },
+          job.endpoint_id
+        )
+      );
 
       const body = JSON.stringify({
         type: job.event_type,
@@ -368,7 +386,7 @@ export class DeliveryWorker {
           // The event id, the same on every attempt: receivers dedupe on it.
           "webhook-id": job.event_id,
           "webhook-timestamp": String(timestamp),
-          "webhook-signature": signatureHeader(job.secrets, job.event_id, timestamp, body),
+          "webhook-signature": signatureHeader(secrets, job.event_id, timestamp, body),
         },
         body,
         // Never follow redirects: a 3xx could bounce us to an internal

@@ -135,8 +135,7 @@ describe("end to end", () => {
   });
 
   test("Dispatchly delivers, the receiver verifies, a later replay of the capture fails", async () => {
-    const { deliveryId, secret } = await createDelivery(pool, url);
-    await pool.query("UPDATE endpoint_secrets SET secret = $1 WHERE secret = $2", [SECRET, secret]);
+    const { deliveryId } = await createDelivery(pool, url, undefined, SECRET);
 
     const worker = new DeliveryWorker(pool, workerConfig({}), {
       egressPolicy: localPolicy(url),

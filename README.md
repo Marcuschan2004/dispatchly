@@ -20,8 +20,9 @@ receiver's own log. It exits 1 if one is lost.
 
 **Security on both sides of the wire.** API keys stored as hashes, an SSRF
 guard that also catches DNS rebinding, [Standard Webhooks](https://www.standardwebhooks.com/)
-HMAC signatures, replay protection on the receiver, and secret rotation with
-zero failed deliveries during the switch.
+HMAC signatures, replay protection on the receiver, secret rotation with
+zero failed deliveries during the switch, and signing secrets encrypted at
+rest.
 
 ## Chaos results
 
@@ -135,6 +136,15 @@ Design and tradeoffs: [docs/reliability-design.md](docs/reliability-design.md).
   revokes the old secrets at once, for a leak. At most 3 live secrets per
   endpoint.
 
+- **Secrets encrypted at rest.** Signing secrets are stored AES-256-GCM
+  encrypted under `SECRETS_ENCRYPTION_KEY` (base64 of 32 bytes), with a
+  fresh random nonce per secret and the endpoint id as authenticated data,
+  so a copied ciphertext won't decrypt on another endpoint. Each row records
+  its key version. The API and worker refuse to start without a valid key
+  unless `HOST` is loopback, where they fall back to a public dev key, and
+  refuse a key that can't decrypt the stored secrets. A test reads the
+  table's data file on disk and finds no secret in any form.
+
 Threat model and design: [docs/security-delivery.md](docs/security-delivery.md).
 
 ## Quickstart (macOS)
@@ -155,6 +165,11 @@ npm test
 `db/schema.sql` on first start. Tests run against a separate
 `dispatchly_test` database. After changing the schema, reset the volume with
 `docker compose down -v && docker compose up -d`.
+
+A database created before secrets were encrypted needs `npm run
+encrypt-secrets` once (stop the API and workers first). It encrypts every
+secret in one transaction, drops the plaintext column, rewrites the table so
+no old copy stays in its data file, and does nothing if run again.
 
 ### Watch a webhook arrive
 
@@ -235,8 +250,12 @@ Honest about what it doesn't do yet:
   for up to the 10 s timeout per request, delaying everyone else's webhooks.
 - **Not deployed.** It runs locally and in CI. The planned free-tier stack is
   Render and Neon ([docs/deploy-stack.md](docs/deploy-stack.md)).
-- **Secrets are stored in plaintext** in Postgres; encryption at rest is
-  planned. API keys are single-tenant and there is no rate limiting.
+- **Encryption at rest stops a leaked dump, not a compromised server.** The
+  key sits in the environment next to `DATABASE_URL`, so anyone who can read
+  the server's environment can decrypt. A KMS would fix that and is out of
+  scope on free tiers. Rotating the key itself needs a re-encrypt command
+  that isn't built yet; the key version column is there for it.
+- **API keys are single-tenant** and there is no rate limiting.
 - **Chaos testing is statistical.** One machine, loopback network, random
   faults. It finds common races, not one-in-a-million interleavings; those
   have targeted tests, like the SIGSTOP fencing test in `test/worker.test.ts`.
