@@ -17,6 +17,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
+import { migrate } from "../src/migrate.js";
 import { seededRandom, startFlakyReceiver, type Profile, type Receipt } from "./receiver.js";
 import { verify, type VerifyReport } from "./verify.js";
 
@@ -116,9 +117,8 @@ async function createChaosDatabase(url: string): Promise<void> {
   } finally {
     await client.end();
   }
-  const db = new pg.Client({ connectionString: url });
-  await db.connect();
-  await db.query(await readFile(`${root}db/schema.sql`, "utf8"));
+  const db = new pg.Pool({ connectionString: url });
+  await migrate(db);
   await db.end();
 }
 

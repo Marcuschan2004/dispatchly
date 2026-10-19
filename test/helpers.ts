@@ -2,16 +2,16 @@ import pg from "pg";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { EgressPolicy } from "../src/security/ssrf.js";
+import { migrate } from "../src/migrate.js";
 import { secretCipherFromEnv } from "../src/security/encryption.js";
 
 // The same cipher the app and worker build from the environment when a test
 // doesn't pass one: the dev key, unless .env sets SECRETS_ENCRYPTION_KEY.
 export const testCipher = secretCipherFromEnv();
 
-// Tests get their own database, "<your db>_test", rebuilt from db/schema.sql
-// on every run. Uses DATABASE_URL (from .env) to find the server.
+// Tests get their own database, "<your db>_test", rebuilt on every run by
+// the same migration runner production uses. Uses DATABASE_URL (from .env) to find the server.
 export function testDatabaseUrl(): string {
   const url = new URL(
     process.env.DATABASE_URL ?? "postgres://dispatchly:dispatchly@localhost:5433/dispatchly"
@@ -37,7 +37,7 @@ export async function createTestDatabase(): Promise<pg.Pool> {
   }
 
   const pool = new pg.Pool({ connectionString: url.toString() });
-  await pool.query(await readFile(new URL("../db/schema.sql", import.meta.url), "utf8"));
+  await migrate(pool);
   return pool;
 }
 
