@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: dispatchly
       POSTGRES_DB: dispatchly
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
       - pgdata:/var/lib/postgresql/data
