@@ -5,8 +5,11 @@
 import { pool } from "./db.js";
 import { DeliveryWorker, workerConfigFromEnv } from "./delivery/worker.js";
 import { retentionConfigFromEnv, startRetention } from "./retention.js";
+import { checkSecretsReadable, secretCipherFromEnv } from "./security/encryption.js";
 
-const worker = new DeliveryWorker(pool, workerConfigFromEnv());
+const cipher = secretCipherFromEnv();
+await checkSecretsReadable(pool, cipher);
+const worker = new DeliveryWorker(pool, workerConfigFromEnv(), { cipher });
 worker.start();
 const stopRetention = startRetention(pool, retentionConfigFromEnv());
 

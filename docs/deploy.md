@@ -46,12 +46,8 @@ openssl rand -base64 32
 ```
 
 Store the output in your password manager too. If it is lost, every endpoint
-secret has to be rotated.
-
-Deploy only once the encryption at rest change is merged into `main`. It
-changes how `db/schema.sql` stores secrets, and the first deploy freezes
-that file as the baseline: a database created before the change would need
-the separate `npm run encrypt-secrets` step run against Neon by hand.
+secret has to be rotated. The server refuses to start on Render without it,
+and refuses a key that can't decrypt what's already stored.
 
 ## 3. Create the Render service from the Blueprint
 

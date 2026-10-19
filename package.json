@@ -12,6 +12,7 @@
     "dev:worker": "tsx watch --env-file-if-exists=.env src/worker.ts",
     "migrate": "node --env-file-if-exists=.env dist/cli/migrate.js",
     "api-key": "node --env-file-if-exists=.env --import tsx src/cli/api-keys.ts",
+    "encrypt-secrets": "node --env-file-if-exists=.env --import tsx src/cli/encrypt-secrets.ts",
     "receiver": "node --env-file-if-exists=.env --import tsx examples/receiver.ts",
     "test": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 test/*.test.ts",
     "chaos": "node --env-file-if-exists=.env --import tsx chaos/run.ts"

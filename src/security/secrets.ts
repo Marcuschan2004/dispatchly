@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { randomBytes } from "node:crypto";
+import type { SecretCipher } from "./encryption.js";
 
 // Standard Webhooks secret format: "whsec_" + base64 of random bytes.
 export function newSecret(): string {
@@ -30,6 +31,7 @@ export interface SecretInfo {
 // leaked-secret case: all older secrets stop working immediately.
 export async function rotateSecret(
   pool: pg.Pool,
+  cipher: SecretCipher,
   endpointId: string,
   overlapHours: number
 ): Promise<RotateResult> {
@@ -74,10 +76,12 @@ export async function rotateSecret(
     );
 
     const secret = newSecret();
+    const { encrypted, keyVersion } = cipher.encrypt(secret, endpointId);
     const { rows } = await client.query<{ id: string; created_at: Date }>(
-      `INSERT INTO endpoint_secrets (endpoint_id, secret) VALUES ($1, $2)
+      `INSERT INTO endpoint_secrets (endpoint_id, secret_encrypted, secret_key_version)
+       VALUES ($1, $2, $3)
        RETURNING id, created_at`,
-      [endpointId, secret]
+      [endpointId, encrypted, keyVersion]
     );
 
     await client.query("COMMIT");

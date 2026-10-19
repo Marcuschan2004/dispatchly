@@ -4,6 +4,7 @@ import { requireApiKey } from "./auth/api-keys.js";
 import { deliveryRoutes } from "./routes/deliveries.js";
 import { endpointRoutes } from "./routes/endpoints.js";
 import { eventRoutes } from "./routes/events.js";
+import { secretCipherFromEnv, type SecretCipher } from "./security/encryption.js";
 import { egressPolicyFromEnv, type EgressPolicy, type Resolver } from "./security/ssrf.js";
 
 export interface AppOptions {
@@ -15,6 +16,7 @@ export interface AppOptions {
   onDeliveriesCreated?: () => void;
   egressPolicy?: EgressPolicy;
   resolve?: Resolver;
+  cipher?: SecretCipher;
 }
 
 // Builds the API without listening, so tests can drive it with app.inject().
@@ -37,6 +39,7 @@ export async function buildApp(opts: AppOptions) {
 
   await app.register(endpointRoutes, {
     pool,
+    cipher: opts.cipher ?? secretCipherFromEnv(),
     egressPolicy: opts.egressPolicy ?? egressPolicyFromEnv(),
     resolve: opts.resolve,
   });

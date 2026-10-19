@@ -1,9 +1,14 @@
 import pg from "pg";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { EgressPolicy } from "../src/security/ssrf.js";
 import { migrate } from "../src/migrate.js";
+import { secretCipherFromEnv } from "../src/security/encryption.js";
+
+// The same cipher the app and worker build from the environment when a test
+// doesn't pass one: the dev key, unless .env sets SECRETS_ENCRYPTION_KEY.
+export const testCipher = secretCipherFromEnv();
 
 // Tests get their own database, "<your db>_test", rebuilt on every run by
 // the same migration runner production uses. Uses DATABASE_URL (from .env) to find the server.
@@ -43,23 +48,26 @@ export async function resetTables(pool: pg.Pool): Promise<void> {
 export async function createDelivery(
   pool: pg.Pool,
   url: string,
-  payload: Record<string, unknown> = { n: 1 }
-): Promise<{ deliveryId: string; eventId: string; secret: string }> {
-  const secret = "whsec_" + randomBytes(32).toString("base64");
+  payload: Record<string, unknown> = { n: 1 },
+  secret = "whsec_" + randomBytes(32).toString("base64")
+): Promise<{ deliveryId: string; eventId: string; endpointId: string; secret: string }> {
+  const endpointId = randomUUID();
+  const { encrypted, keyVersion } = testCipher.encrypt(secret, endpointId);
   const { rows } = await pool.query<{ delivery_id: string; event_id: string }>(
     `WITH ep AS (
-       INSERT INTO endpoints (url) VALUES ($1) RETURNING id
+       INSERT INTO endpoints (id, url) VALUES ($1, $2) RETURNING id
      ), s AS (
-       INSERT INTO endpoint_secrets (endpoint_id, secret) SELECT id, $2 FROM ep
+       INSERT INTO endpoint_secrets (endpoint_id, secret_encrypted, secret_key_version)
+       SELECT id, $3, $4 FROM ep
      ), ev AS (
-       INSERT INTO events (type, payload) VALUES ('order.paid', $3) RETURNING id
+       INSERT INTO events (type, payload) VALUES ('order.paid', $5) RETURNING id
      )
      INSERT INTO deliveries (event_id, endpoint_id)
      SELECT ev.id, ep.id FROM ev, ep
      RETURNING id AS delivery_id, event_id`,
-    [url, secret, payload]
+    [endpointId, url, encrypted, keyVersion, payload]
   );
-  return { deliveryId: rows[0].delivery_id, eventId: rows[0].event_id, secret };
+  return { deliveryId: rows[0].delivery_id, eventId: rows[0].event_id, endpointId, secret };
 }
 
 export interface ReceivedRequest {
