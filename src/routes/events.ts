@@ -7,7 +7,10 @@ const CreateEvent = z.object({
   payload: z.record(z.unknown()),
 });
 
-export async function eventRoutes(app: FastifyInstance) {
+export async function eventRoutes(
+  app: FastifyInstance,
+  opts: { onDeliveriesCreated?: () => void }
+) {
   app.post("/events", async (req, reply) => {
     const parsed = CreateEvent.safeParse(req.body);
     if (!parsed.success) {
@@ -58,6 +61,7 @@ export async function eventRoutes(app: FastifyInstance) {
       );
 
       await client.query("COMMIT");
+      if (deliveries.length > 0) opts.onDeliveriesCreated?.();
       return reply.code(201).send({
         event_id: eventId,
         deliveries_created: deliveries.length,
