@@ -7,7 +7,10 @@
     "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
     "build": "tsc",
     "start": "node --env-file-if-exists=.env dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "worker": "node --env-file-if-exists=.env dist/worker.js",
+    "dev:worker": "tsx watch --env-file-if-exists=.env src/worker.ts",
+    "test": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "dependencies": {
     "fastify": "^5.12.5",

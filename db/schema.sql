@@ -30,15 +30,25 @@ CREATE TABLE events (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Deliveries: one row per (event, endpoint). This table IS the queue.
+-- Deliveries: one row per (event, endpoint). This table IS the queue, and
+-- status = 'dead' is the dead-letter queue: same row, so replay is one UPDATE.
+--
+-- Leases: a worker claims a row by pushing next_attempt_at forward by the
+-- lease length and writing a fresh claim_token. While the lease runs the row
+-- is simply not due, so no other worker takes it. If the worker crashes, the
+-- lease runs out and the row is due again. No transaction stays open while
+-- the HTTP request is in flight.
 CREATE TABLE deliveries (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id          UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  endpoint_id       UUID NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
+  -- RESTRICT, not CASCADE: deleting an endpoint must not erase its delivery
+  -- history. Endpoints are soft-deleted with active = false.
+  endpoint_id       UUID NOT NULL REFERENCES endpoints(id) ON DELETE RESTRICT,
   status            TEXT NOT NULL DEFAULT 'pending'
                       CHECK (status IN ('pending', 'delivered', 'dead')),
-  attempts          INT NOT NULL DEFAULT 0,
-  next_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  attempts          INT NOT NULL DEFAULT 0,      -- counts claims, so a crash costs an attempt
+  next_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),  -- also the lease expiry while claimed
+  claim_token       UUID,                        -- fencing token; non-NULL = in flight
   last_status_code  INT,
   last_error        TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -51,3 +61,24 @@ CREATE TABLE deliveries (
 CREATE INDEX deliveries_due_idx
   ON deliveries (next_attempt_at)
   WHERE status = 'pending';
+
+-- Audit trail: one row per claim, inserted when the attempt starts and filled
+-- in when it finishes. Keyed by claim_token rather than attempt number,
+-- because replay resets deliveries.attempts and numbers can repeat. An attempt
+-- whose worker died is marked 'lease_expired' when the row is reclaimed.
+CREATE TABLE delivery_attempts (
+  id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  delivery_id       UUID NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+  claim_token       UUID NOT NULL UNIQUE,
+  attempt           INT NOT NULL,
+  worker_id         TEXT NOT NULL,
+  started_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at       TIMESTAMPTZ,
+  duration_ms       INT,
+  status_code       INT,
+  error             TEXT,
+  response_snippet  TEXT,                        -- first 1 KB of the response body
+  outcome           TEXT CHECK (outcome IN ('delivered', 'retry', 'dead', 'lease_expired'))
+);
+
+CREATE INDEX delivery_attempts_delivery_idx ON delivery_attempts (delivery_id);
