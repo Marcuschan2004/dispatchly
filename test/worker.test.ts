@@ -1,6 +1,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
 import { DeliveryWorker, workerConfig, type WorkerConfig } from "../src/delivery/worker.js";
@@ -230,6 +231,69 @@ describe("delivery", () => {
     const d = await delivery(deliveryId);
     assert.equal(d.status, "pending");
     assert.equal(d.last_error, "scheme file: is not allowed; use http or https");
+  });
+});
+
+describe("head-of-line blocking", () => {
+  test("a hanging endpoint does not delay deliveries to a healthy one", async () => {
+    const held: ServerResponse[] = [];
+    receiver.respond((req, res) => {
+      if (JSON.parse(req.body).data.hang) held.push(res);
+      else res.writeHead(200).end("ok");
+    });
+    const hanging = await createDelivery(pool, receiver.url, { hang: true });
+    // A long request timeout, so a worker that waits for the hanging request
+    // before claiming anything else misses the deadline below by seconds.
+    const worker = makeWorker("w1", { requestTimeoutMs: 5000, leaseMs: 10_000, maxIdleMs: 60_000 });
+    worker.start();
+    try {
+      await waitFor("hanging request", async () => held.length === 1);
+      const healthy = await createDelivery(pool, receiver.url, { hang: false });
+      worker.wake();
+      await waitFor(
+        "healthy delivery",
+        async () => (await delivery(healthy.deliveryId)).status === "delivered",
+        1000
+      );
+      const d = await delivery(hanging.deliveryId);
+      assert.equal(d.status, "pending");
+      assert.notEqual(d.claim_token, null, "the hanging request is still in flight");
+    } finally {
+      for (const res of held) res.writeHead(200).end();
+      await worker.stop();
+    }
+  });
+
+  test("keeps at most `concurrency` requests in flight and refills as they finish", async () => {
+    const held: ServerResponse[] = [];
+    receiver.respond((_req, res) => held.push(res));
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push((await createDelivery(pool, receiver.url)).deliveryId);
+    const worker = makeWorker("w1", { concurrency: 3, requestTimeoutMs: 5000, leaseMs: 10_000 });
+    worker.start();
+    try {
+      await waitFor("three requests", async () => held.length === 3);
+      await sleep(300);
+      assert.equal(held.length, 3, "no fourth request while every slot is busy");
+
+      held[0].writeHead(200).end();
+      await waitFor("a freed slot to be refilled", async () => held.length === 4);
+      await sleep(300);
+      assert.equal(held.length, 4, "one slot freed, one request started");
+
+      for (const res of held.slice(1)) res.writeHead(200).end();
+      await waitFor("the last request", async () => held.length === 5);
+      held[4].writeHead(200).end();
+      await waitFor("all delivered", async () => {
+        const { rows } = await pool.query(
+          `SELECT count(*)::int AS n FROM deliveries WHERE status = 'delivered'`
+        );
+        return rows[0].n === 5;
+      });
+    } finally {
+      for (const res of held) if (!res.headersSent) res.writeHead(200).end();
+      await worker.stop();
+    }
   });
 });
 

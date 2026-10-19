@@ -131,8 +131,10 @@ export class DeliveryWorker {
     this.interruptSleep?.();
   }
 
-  // One pass: dead-letter crashed final attempts, claim a batch, deliver it.
-  // Returns how many deliveries were attempted.
+  // One batch, start to finish: dead-letter crashed final attempts, claim up
+  // to `concurrency` deliveries, deliver them all. Returns how many were
+  // attempted. Tests use this for a deterministic pass; the running loop
+  // in run() refills slots as they free up instead.
   async tick(): Promise<number> {
     await this.reapExhausted();
     const jobs = await this.claim(this.config.concurrency);
@@ -140,20 +142,43 @@ export class DeliveryWorker {
     return jobs.length;
   }
 
+  // Keeps up to `concurrency` deliveries in flight and claims more as each
+  // one finishes. A receiver that hangs until the request timeout ties up
+  // one slot; the others keep delivering. (Waiting for a whole batch before
+  // claiming the next would hold every endpoint back behind the slowest.)
   private async run(): Promise<void> {
     this.log("info", "worker started", { worker_id: this.id });
+    const inFlight = new Set<Promise<void>>();
     while (!this.stopping) {
       this.woken = false;
       try {
-        if ((await this.tick()) > 0) continue;
-        // Sleep until the next retry or lease expiry instead of polling, so
-        // an idle database can scale to zero. wake() cuts the sleep short.
+        const free = this.config.concurrency - inFlight.size;
+        if (free === 0) {
+          // Every slot is busy. No query until one frees up.
+          await Promise.race(inFlight);
+          continue;
+        }
+        await this.reapExhausted();
+        const jobs = await this.claim(free);
+        for (const job of jobs) {
+          const p: Promise<void> = this.process(job).finally(() => {
+            inFlight.delete(p);
+            // A free slot is a reason to look for work, same as new events.
+            this.wake();
+          });
+          inFlight.add(p);
+        }
+        if (jobs.length === free) continue;
+        // Nothing else is due. Sleep until the next retry or lease expiry
+        // instead of polling, so an idle database can scale to zero. wake()
+        // (new events, or a slot freeing up) cuts the sleep short.
         await this.sleep(await this.msUntilNextDue());
       } catch (err) {
         this.log("error", "worker loop error", { error: String(err) });
         await this.sleep(Math.min(5_000, this.config.maxIdleMs));
       }
     }
+    await Promise.all(inFlight);
     this.log("info", "worker stopped", { worker_id: this.id });
   }
 
