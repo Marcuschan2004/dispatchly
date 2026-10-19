@@ -21,9 +21,25 @@ dependency. The deliveries table is the queue.
 
 ## API (so far)
 
-    GET  /health
+    GET  /health                                                     (no key needed)
     POST /endpoints   {"url": "...", "event_types": ["order.paid"]}  -> returns secret once
     GET  /endpoints
+    POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional
+
+Every route except `/health` needs `Authorization: Bearer <api key>`. Keys are
+created from the command line, because the first key can't come from an API
+that needs a key:
+
+    npm run api-key -- create my-app      # prints the key once
+    npm run api-key -- list
+    npm run api-key -- revoke dk_AbCdEfGh  # by id or by the prefix shown in list
+
+(In production, after `npm run build`: `node dist/cli/api-keys.js create my-app`.)
+
+Only a SHA-256 hash of each key is stored. `.env.example` sets
+`AUTH_DISABLED=true` so local scripts like `scripts/check-events.sh` work
+without a key; the server refuses to start with it unless `HOST` is a loopback
+address.
 
 ## How delivery works
 
