@@ -31,4 +31,4 @@ dependency. The deliveries table is the queue.
 - [ ] Worker: SKIP LOCKED claiming with leases, signing, backoff + jitter, dead-letter, replay
 - [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [ ] Security: SSRF guard incl. DNS rebinding, secret rotation, replay protection, receiver SDK, THREAT_MODEL.md
-- [ ] Load test (k6), metrics, AWS deploy, CI
+- [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md)), CI
