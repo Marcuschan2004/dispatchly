@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { randomBytes } from "node:crypto";
+import type pg from "pg";
 import { z } from "zod";
-import { pool } from "../db.js";
 
 const CreateEndpoint = z.object({
   url: z.string().url(),
@@ -13,7 +13,8 @@ function newSecret(): string {
   return "whsec_" + randomBytes(32).toString("base64");
 }
 
-export async function endpointRoutes(app: FastifyInstance) {
+export async function endpointRoutes(app: FastifyInstance, opts: { pool: pg.Pool }) {
+  const { pool } = opts;
   // Register a new endpoint. The secret is returned ONCE, at creation.
   app.post("/endpoints", async (req, reply) => {
     const parsed = CreateEndpoint.safeParse(req.body);
