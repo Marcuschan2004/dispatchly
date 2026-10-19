@@ -4,7 +4,13 @@ import type pg from "pg";
 import { buildApp } from "../src/app.js";
 import { DeliveryWorker, workerConfig } from "../src/delivery/worker.js";
 import { signatureHeader } from "../src/security/signing.js";
-import { createTestDatabase, localPolicy, resetTables, startReceiver } from "./helpers.js";
+import {
+  createTestDatabase,
+  localPolicy,
+  resetTables,
+  startReceiver,
+  testCipher,
+} from "./helpers.js";
 
 let pool: pg.Pool;
 let app: Awaited<ReturnType<typeof buildApp>>;
@@ -211,7 +217,11 @@ describe("secret rotation", () => {
   test("the database refuses a second current secret", async () => {
     const { id } = await createEndpoint();
     await assert.rejects(
-      pool.query("INSERT INTO endpoint_secrets (endpoint_id, secret) VALUES ($1, 'whsec_x')", [id]),
+      pool.query(
+        `INSERT INTO endpoint_secrets (endpoint_id, secret_encrypted, secret_key_version)
+         VALUES ($1, $2, $3)`,
+        [id, testCipher.encrypt("whsec_x", id).encrypted, testCipher.keyVersion]
+      ),
       /endpoint_secrets_one_current_idx/
     );
   });
