@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dispatchly
+          POSTGRES_PASSWORD: dispatchly
+          POSTGRES_DB: dispatchly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dispatchly"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      DATABASE_URL: postgres://dispatchly:dispatchly@localhost:5432/dispatchly
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      # Tests create and reset their own dispatchly_test database.
+      - run: npm test
+
+      # The docker compose volume loads the schema locally; here we load it
+      # by hand, then run the built server the way production does.
+      - name: Start API for check-events.sh
+        env:
+          AUTH_DISABLED: "true"
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/schema.sql
+          nohup npm start > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf localhost:3000/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "API did not become healthy"; cat server.log; exit 1
+
+      - name: Run scripts/check-events.sh
+        env:
+          PSQL: psql postgres://dispatchly:dispatchly@localhost:5432/dispatchly -tAc
+        run: bash scripts/check-events.sh
+
+      - name: Server log
+        if: failure()
+        run: cat server.log || true
