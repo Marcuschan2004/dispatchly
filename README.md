@@ -77,6 +77,35 @@ endpoint row), and a partial unique index guarantees one current secret even
 if that logic breaks. An endpoint can have at most 3 live secrets, which keeps
 the signature header small.
 
+## Replay protection
+
+A signed request stays valid forever unless the receiver bounds it, so
+replay protection takes a timestamp window and a seen-id store together.
+
+- **Sender:** every attempt carries a fresh `webhook-timestamp` inside the
+  signed content and the same `webhook-id` (the event id).
+- **Receiver:** `verifyWebhook(headers, rawBody, secrets)` in
+  `src/security/signing.ts` checks the HMAC (constant-time compare), then
+  rejects timestamps more than 300 s off in either direction. It agrees with
+  the official `standardwebhooks` library in both directions (tests).
+- **Dedupe:** `examples/receiver.ts` records each `webhook-id` in a
+  `processed_webhooks` table in the same transaction as its own work, so a
+  copy replayed inside the window, or a retry, is answered 200 and skipped.
+
+Try it (two terminals, Dispatchly on :3000 with `RUN_WORKER=true` and the
+three `ENDPOINT_ALLOW_*` lines from `.env.example` uncommented, with
+`ENDPOINT_ALLOW_PORTS=4000`):
+
+    curl -s -X POST localhost:3000/endpoints -H 'content-type: application/json' \
+      -d '{"url":"http://127.0.0.1:4000/hook"}'          # note the secret
+    WEBHOOK_SECRET=whsec_... npm run receiver
+    curl -s -X POST localhost:3000/events -H 'content-type: application/json' \
+      -d '{"type":"order.paid","payload":{"order_id":7}}'
+
+The receiver logs `processed` and a `replay_with` curl command holding the
+exact captured request. Run it right away: `duplicate`. Run it after 5
+minutes: `401`, `timestamp_out_of_window`.
+
 ## How delivery works
 
 The worker (in the API process with `RUN_WORKER=true`, or standalone with
@@ -113,5 +142,6 @@ Tunables (env): `WORKER_CONCURRENCY`, `WORKER_LEASE_MS`,
 - [x] Worker: SKIP LOCKED claiming with leases, fencing, signing, backoff + jitter, dead-letter
 - [ ] Replay API for dead deliveries
 - [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
-- [ ] Security: SSRF guard incl. DNS rebinding, secret rotation, replay protection, receiver SDK, THREAT_MODEL.md
+- [x] Security: API keys, SSRF guard incl. DNS rebinding, secret rotation, replay protection + receiver example
+- [ ] Secrets encrypted at rest, THREAT_MODEL.md
 - [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md)), CI

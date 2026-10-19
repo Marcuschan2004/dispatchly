@@ -11,6 +11,7 @@
     "worker": "node --env-file-if-exists=.env dist/worker.js",
     "dev:worker": "tsx watch --env-file-if-exists=.env src/worker.ts",
     "api-key": "node --env-file-if-exists=.env --import tsx src/cli/api-keys.ts",
+    "receiver": "node --env-file-if-exists=.env --import tsx examples/receiver.ts",
     "test": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
+    "standardwebhooks": "^1.1.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },

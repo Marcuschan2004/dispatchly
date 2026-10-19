@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
 import { DeliveryWorker, workerConfig, type WorkerConfig } from "../src/delivery/worker.js";
-import { signatureHeader } from "../src/delivery/signing.js";
+import { signatureHeader } from "../src/security/signing.js";
 import {
   createDelivery,
   createTestDatabase,

@@ -12,7 +12,7 @@ import {
 } from "../security/ssrf.js";
 import { MAX_LIVE_SECRETS } from "../security/secrets.js";
 import { backoffDelayMs, parseRetryAfterMs } from "./backoff.js";
-import { signatureHeader } from "./signing.js";
+import { signatureHeader } from "../security/signing.js";
 
 const ConfigSchema = z
   .object({

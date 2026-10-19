@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type pg from "pg";
 import { buildApp } from "../src/app.js";
 import { DeliveryWorker, workerConfig } from "../src/delivery/worker.js";
-import { signatureHeader } from "../src/delivery/signing.js";
+import { signatureHeader } from "../src/security/signing.js";
 import { createTestDatabase, localPolicy, resetTables, startReceiver } from "./helpers.js";
 
 let pool: pg.Pool;
