@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { pool } from "./db.js";
 import { endpointRoutes } from "./routes/endpoints.js";
+import { eventRoutes } from "./routes/events.js";
 
 const app = Fastify({ logger: true });
 
@@ -10,7 +11,8 @@ app.get("/health", async () => {
 });
 
 await app.register(endpointRoutes);
-// TODO (you): await app.register(eventRoutes);
+await app.register(eventRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
-await app.listen({ port, host: "0.0.0.0" });
+const host = process.env.HOST ?? "127.0.0.1";
+await app.listen({ port, host });
