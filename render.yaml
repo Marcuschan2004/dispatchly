@@ -1,0 +1,38 @@
+# Render Blueprint: one free web service running the API and the delivery
+# worker in one process. Postgres lives on Neon (see docs/deploy.md), so
+# nothing here creates a database.
+services:
+  - type: web
+    name: dispatchly
+    runtime: node
+    plan: free
+    # Same region as the Neon database: the worker makes several queries
+    # per delivery.
+    region: oregon
+    branch: main
+    # Node version comes from .nvmrc. NODE_ENV is left unset so npm ci
+    # installs the dev dependencies the TypeScript build needs.
+    buildCommand: npm ci && npm run build
+    # Free instances can't run a pre-deploy command, so migrations run before
+    # every start. They are idempotent and take an advisory lock, so a cold
+    # start or two overlapping deploys are safe.
+    startCommand: npm run migrate && npm start
+    # /livez never queries Postgres, so Render's checks don't keep Neon awake.
+    healthCheckPath: /livez
+    envVars:
+      # Render sets PORT; the server must listen on all interfaces.
+      - key: HOST
+        value: 0.0.0.0
+      - key: RUN_WORKER
+        value: "true"
+      # Delete delivered events, with their deliveries and attempts, after
+      # this many days. Dead letters are kept. 0 turns pruning off.
+      - key: RETENTION_DAYS
+        value: "7"
+      # Secrets: Render asks for these when the Blueprint is created.
+      # Neon's direct (not -pooler) connection string, with sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # Key that encrypts endpoint signing secrets at rest.
+      - key: SECRET_ENCRYPTION_KEY
+        sync: false

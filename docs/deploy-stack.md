@@ -116,22 +116,22 @@ the minimum 0.25 CU, so Neon would suspend it around day 17 (400 awake hours).
 ## Local dev and deploy
 
 Local development is unchanged; the cloud deployment exists for the live demo.
+The step-by-step checklist is [deploy.md](deploy.md).
 
-1. **Neon:** create a project on Postgres 16 in AWS US West 2 (Oregon). Use the
-   direct (non-pooled) connection string with `sslmode=require`, and load the
-   schema once with `psql "$DATABASE_URL" -f db/schema.sql`.
-2. **Render:** new Web Service from this repository in the Oregon region (same
-   region as Neon, since the worker makes several queries per delivery). Build
-   `npm ci && npm run build`, start `npm start`, env `DATABASE_URL` and
-   `NODE_VERSION=22`. The server listens on `0.0.0.0:$PORT`.
-3. **Pool:** cap `max` at about 5 connections and register `pool.on('error')`.
+1. **Neon:** a project on Postgres 16 in AWS US West 2 (Oregon), reached
+   through the direct (non-pooled) connection string with TLS verified.
+2. **Render:** a Blueprint (`render.yaml`) for one free web service in the
+   same region, since the worker makes several queries per delivery. Build
+   `npm ci && npm run build`, start `npm run migrate && npm start`. The server
+   listens on `0.0.0.0:$PORT`.
+3. **Pool:** `pool.on('error')` is registered in `src/db.ts`.
 4. **Pinger:** a free cron pinger (for example cron-job.org) calling
    `GET /livez` every 10 minutes.
 5. **CI:** a GitHub Actions workflow with a `postgres:16` service container
-   running typecheck and tests.
-6. **Schema changes:** Compose only runs `schema.sql` on a fresh volume and Neon
-   never re-runs it, so schema changes after the first deploy move to numbered
-   migration files applied by a script in both places.
+   running typecheck, tests, migrations and `scripts/check-events.sh`.
+6. **Schema changes:** `db/schema.sql` is the baseline. Later changes are
+   numbered files in `db/migrations/`, applied by `npm run migrate` on every
+   Render start and by the test setup.
 
 ## With a budget
 
