@@ -137,13 +137,29 @@ Tunables (env): `WORKER_CONCURRENCY`, `WORKER_LEASE_MS`,
 `WORKER_REQUEST_TIMEOUT_MS`, `WORKER_MAX_ATTEMPTS`, `WORKER_BACKOFF_BASE_MS`,
 `WORKER_BACKOFF_CAP_MS`, `WORKER_MAX_IDLE_MS`.
 
+## Reliability proof
+
+    npm run chaos      # needs docker compose up -d; about a minute
+
+The chaos harness runs the real API and four real worker processes against
+Postgres, delivers to a receiver that fails, hangs or drops a third of its
+requests, and meanwhile `kill -9`s workers, freezes them past their lease,
+kills the API and crash-restarts Postgres. A verifier then checks every
+accepted event against the database and the receiver's own log.
+
+Typical result (1,000 events, 3 endpoints, seed 101): **0 of 3,000 deliveries
+missing** after 25 worker kills, 2 API kills and 2 Postgres crash-restarts;
+1,997 confirmed delivered, 1,003 dead-lettered, and 0.45% delivered twice
+because of a Dispatchly-side crash. Design, all results and the limits are in
+[docs/chaos-harness.md](docs/chaos-harness.md).
+
 ## Roadmap
 
 - [x] Endpoint registration, Standard Webhooks secrets, rotation-ready schema
 - [ ] Idempotent event ingestion with fan-out to subscribed endpoints
 - [x] Worker: SKIP LOCKED claiming with leases, fencing, signing, backoff + jitter, dead-letter
 - [ ] Replay API for dead deliveries
-- [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
+- [x] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [x] Security: API keys, SSRF guard incl. DNS rebinding, secret rotation, replay protection + receiver example
 - [ ] Secrets encrypted at rest, THREAT_MODEL.md
 - [x] CI: typecheck, build, tests and `scripts/check-events.sh` against Postgres 16 on every push to main and every PR
