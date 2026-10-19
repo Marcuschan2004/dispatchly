@@ -21,6 +21,12 @@ CREATE TABLE endpoint_secrets (
 
 CREATE INDEX endpoint_secrets_endpoint_idx ON endpoint_secrets (endpoint_id);
 
+-- Exactly one current (never-expiring) secret per endpoint. The rotate route
+-- already serializes on a row lock; this makes the database refuse a second
+-- current secret even if that code has a bug.
+CREATE UNIQUE INDEX endpoint_secrets_one_current_idx
+  ON endpoint_secrets (endpoint_id) WHERE expires_at IS NULL;
+
 -- Events: what clients send us. idempotency_key makes retries from clients safe.
 CREATE TABLE events (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
