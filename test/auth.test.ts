@@ -13,7 +13,11 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 
 before(async () => {
   pool = await createTestDatabase();
-  app = await buildApp({ pool });
+  // A fixed public DNS answer, so registering example.com needs no network.
+  app = await buildApp({
+    pool,
+    resolve: async () => [{ address: "93.184.215.14", family: 4 }],
+  });
 });
 
 after(async () => {

@@ -2,9 +2,17 @@ import type { FastifyInstance } from "fastify";
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import { z } from "zod";
+import {
+  SsrfError,
+  validateEndpointUrl,
+  type EgressPolicy,
+  type Resolver,
+} from "../security/ssrf.js";
 
 const CreateEndpoint = z.object({
-  url: z.string().url(),
+  // z.string().url() alone accepts file:, gopher: and metadata URLs; the
+  // real check is validateEndpointUrl() in the handler.
+  url: z.string().max(2048),
   event_types: z.array(z.string().min(1)).default([]),
 });
 
@@ -13,7 +21,10 @@ function newSecret(): string {
   return "whsec_" + randomBytes(32).toString("base64");
 }
 
-export async function endpointRoutes(app: FastifyInstance, opts: { pool: pg.Pool }) {
+export async function endpointRoutes(
+  app: FastifyInstance,
+  opts: { pool: pg.Pool; egressPolicy: EgressPolicy; resolve?: Resolver }
+) {
   const { pool } = opts;
   // Register a new endpoint. The secret is returned ONCE, at creation.
   app.post("/endpoints", async (req, reply) => {
@@ -21,7 +32,14 @@ export async function endpointRoutes(app: FastifyInstance, opts: { pool: pg.Pool
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
-    const { url, event_types } = parsed.data;
+    const { event_types } = parsed.data;
+    let url: string;
+    try {
+      url = (await validateEndpointUrl(parsed.data.url, opts.egressPolicy, opts.resolve)).href;
+    } catch (err) {
+      if (err instanceof SsrfError) return reply.code(400).send({ error: { url: err.message } });
+      throw err;
+    }
     const secret = newSecret();
 
     // One statement, so the endpoint and its secret are created atomically:

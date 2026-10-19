@@ -41,6 +41,26 @@ Only a SHA-256 hash of each key is stored. `.env.example` sets
 without a key; the server refuses to start with it unless `HOST` is a loopback
 address.
 
+## SSRF guard
+
+Endpoint URLs come from API callers, so Dispatchly must not become a way to
+reach its own network. `src/security/ssrf.ts` checks in two places:
+
+- **The URL, at registration and before every attempt:** https only, ports 443
+  and 80, no `user:pass@`, and no IP-literal host in a private, loopback,
+  link-local (cloud metadata), CGNAT, multicast or reserved range. Checks run
+  on the parsed URL, so `http://2130706433` and `http://0x7f.1` are caught as
+  `127.0.0.1`. Registration also resolves the name once for fast feedback.
+- **The connection, on every attempt:** deliveries go through an undici
+  `Agent` whose `connect.lookup` resolves the name and refuses if any address
+  is blocked. The socket connects to the address that was checked, so DNS
+  rebinding (public at registration, `127.0.0.1` at delivery) fails. Node skips
+  `lookup` for IP literals, which is why the URL check runs every attempt too.
+
+Redirects are never followed; a 3xx is a failed attempt. For local demos,
+`ENDPOINT_ALLOW_HTTP`, `ENDPOINT_ALLOW_PORTS` and `ENDPOINT_ALLOW_IPS` open
+exceptions (see `.env.example`).
+
 ## How delivery works
 
 The worker (in the API process with `RUN_WORKER=true`, or standalone with

@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import type { EgressPolicy } from "../src/security/ssrf.js";
 
 // Tests get their own database, "<your db>_test", rebuilt from db/schema.sql
 // on every run. Uses DATABASE_URL (from .env) to find the server.
@@ -116,3 +117,21 @@ export async function waitFor<T>(
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Production blocks 127.0.0.1. Tests deliver to a local receiver, so they
+// allow exactly that address and port, over plain http.
+export function localPolicy(receiverUrl: string): EgressPolicy {
+  return {
+    allowHttp: true,
+    allowedPorts: [443, 80, Number(new URL(receiverUrl).port)],
+    allowedIps: ["127.0.0.1"],
+  };
+}
+
+export function localPolicyEnv(receiverUrl: string): Record<string, string> {
+  return {
+    ENDPOINT_ALLOW_HTTP: "true",
+    ENDPOINT_ALLOW_PORTS: new URL(receiverUrl).port,
+    ENDPOINT_ALLOW_IPS: "127.0.0.1",
+  };
+}

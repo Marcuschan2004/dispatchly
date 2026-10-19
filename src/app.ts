@@ -3,12 +3,15 @@ import type pg from "pg";
 import { requireApiKey } from "./auth/api-keys.js";
 import { endpointRoutes } from "./routes/endpoints.js";
 import { eventRoutes } from "./routes/events.js";
+import { egressPolicyFromEnv, type EgressPolicy, type Resolver } from "./security/ssrf.js";
 
 export interface AppOptions {
   pool: pg.Pool;
   authDisabled?: boolean;
   logger?: boolean;
   onDeliveriesCreated?: () => void;
+  egressPolicy?: EgressPolicy;
+  resolve?: Resolver;
 }
 
 // Builds the API without listening, so tests can drive it with app.inject().
@@ -23,7 +26,11 @@ export async function buildApp(opts: AppOptions) {
     return { ok: true };
   });
 
-  await app.register(endpointRoutes, { pool });
+  await app.register(endpointRoutes, {
+    pool,
+    egressPolicy: opts.egressPolicy ?? egressPolicyFromEnv(),
+    resolve: opts.resolve,
+  });
   await app.register(eventRoutes, { pool, onDeliveriesCreated: opts.onDeliveriesCreated });
   return app;
 }
