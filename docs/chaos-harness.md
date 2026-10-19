@@ -144,9 +144,12 @@ A quotable line, from seed 101:
   single hanging request holds 49 finished slots idle until its timeout. Under
   chaos the queue backs up for this reason, not because of Postgres. In
   production, with a 10 s timeout, one slow customer endpoint would delay
-  everyone's webhooks. The fix is a worker that keeps N requests in flight and
-  claims a new row each time one finishes. That is a separate change; the
-  harness only measures it.
+  everyone's webhooks. Fixed: the worker now keeps up to `WORKER_CONCURRENCY`
+  requests in flight and claims a new row each time one finishes, so a hanging
+  request ties up one slot. In one run each on seed 20261019 (Linux, 1,000
+  events), the old loop still had 529 deliveries pending when the faults
+  stopped and the whole run took 58 s; the new one had 14 pending and took
+  49 s. Both had 0 missing.
 - **The fence is hard to hit, and that is fine.** A stale write needs a worker
   paused mid-request, its lease to run out, and another worker to re-claim the
   row before it wakes. With fast responses most pauses catch nothing in
