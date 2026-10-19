@@ -68,6 +68,12 @@ CREATE INDEX deliveries_due_idx
   ON deliveries (next_attempt_at)
   WHERE status = 'pending';
 
+-- The dead-letter queue, per endpoint: what GET /deliveries?status=dead and
+-- bulk replay read. Partial, so it only holds the (few) dead rows.
+CREATE INDEX deliveries_dead_idx
+  ON deliveries (endpoint_id, created_at)
+  WHERE status = 'dead';
+
 -- Audit trail: one row per claim, inserted when the attempt starts and filled
 -- in when it finishes. Keyed by claim_token rather than attempt number,
 -- because replay resets deliveries.attempts and numbers can repeat. An attempt

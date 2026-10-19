@@ -127,7 +127,8 @@ Replay comes in two sizes:
 | Endpoint | Use case | Effect |
 | --- | --- | --- |
 | `POST /deliveries/:id/replay` | One webhook the receiver lost | Sets that row back to `pending`, `attempts = 0`, due now |
-| `POST /endpoints/:id/replay` with `{"since": ...}` | Receiver was down all weekend | Same update for every dead row of that endpoint since the timestamp |
+| `POST /endpoints/:id/replay` with optional `{"since": ...}` | Receiver was down all weekend | Same update for every dead row of that endpoint created at or after `since` (all of them if omitted) |
+| `GET /deliveries?status=dead&endpoint_id=...` | See what is in the DLQ before replaying | Newest first, keyset-paginated with `cursor` |
 
 Both only touch rows that are `dead` (`WHERE status = 'dead'`), so a replay can never double-send a delivery that is still pending or already delivered. The `delivery_attempts` history is kept, so the dashboard shows the failures and then the replayed success.
 
@@ -137,6 +138,15 @@ Two properties fall out of the earlier decisions:
 - **Replays keep the original `webhook-id`.** A receiver that did process the event before the failure path will drop the replay as a duplicate, which is the correct outcome.
 
 Bulk replay does not need its own rate limit: rows go back into the normal queue and the worker's batch size and backoff pace them.
+
+How it is built (`src/routes/deliveries.ts`):
+
+- **Concurrent replays are safe because of the `WHERE status = 'dead'`, not a lock held in code.** Under `READ COMMITTED`, an `UPDATE` that waits on a row another transaction is changing re-checks its `WHERE` on the new version once that commits. Twenty simultaneous replays of one delivery give one `202` and nineteen `409`s; eight bulk replays racing twenty single replays requeue each row exactly once. Tests cover both.
+- **Bulk replay locks rows in `id` order** (`SELECT ... ORDER BY id FOR UPDATE` in a CTE) so two bulk replays can't each hold a row the other needs and deadlock. A plain `UPDATE` usually scans in the same order anyway, so this is a guard, not a fix for an observed failure.
+- **Replay clears `claim_token`.** A worker that stalled through the row's last lease still holds the old token; its fenced result write now matches nothing, so it can't overwrite the replay.
+- **Replay wakes the worker** through the same hook ingest uses, so the row goes out on the next tick instead of after the worker's idle sleep. A standalone worker process isn't woken and picks the row up within `WORKER_MAX_IDLE_MS`.
+- **Inactive endpoints are refused with `409`.** An endpoint is soft-deleted with `active = false`; replaying into it would resend to a receiver the user turned off.
+- **`202 Accepted`**, because replay queues a send rather than performing it.
 
 ## Scope check
 
@@ -187,5 +197,5 @@ Schema changes this needs, in one migration:
 - [ ] Should `410 Gone` dead-letter immediately and disable the endpoint, instead of retrying?
 - [ ] When an endpoint is deactivated, do its pending deliveries pause (claim query skips inactive endpoints) or go dead? Pausing seems safer.
 - [ ] Retention: how long to keep delivered rows and attempts before pruning, given free-tier storage limits?
-- [ ] Reject a reused `Idempotency-Key` with a different body (422)? This doesn't conflict with `scripts/check-events.sh`, which always resends the same body.
+- [x] Reject a reused `Idempotency-Key` with a different body (422)? Yes: same key with a different `type` or `payload` returns 422, compared as jsonb so key order and whitespace don't count. `scripts/check-events.sh` always resends the same body, so it is unaffected.
 - [ ] Which free host runs the worker around the clock, and does the worker share a process with the API (cheapest) or run separately?

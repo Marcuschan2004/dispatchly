@@ -26,9 +26,13 @@ dependency. The deliveries table is the queue.
     GET  /health                                                     (no key needed)
     POST /endpoints   {"url": "...", "event_types": ["order.paid"]}  -> returns secret once
     GET  /endpoints
-    POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional
+    POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional;
+                                                                     reusing a key with another body -> 422
     POST /endpoints/:id/secrets/rotate  {"overlap_hours": 24}        -> returns new secret once
     GET  /endpoints/:id/secrets                                      live secrets, metadata only
+    GET  /deliveries?status=dead&endpoint_id=...&limit=50&cursor=... dead-letter queue, newest first
+    POST /deliveries/:id/replay                                      requeue one dead delivery
+    POST /endpoints/:id/replay  {"since": "2026-10-17T00:00:00Z"}    requeue all its dead deliveries
 
 Every route except `/health` needs `Authorization: Bearer <api key>`. Keys are
 created from the command line, because the first key can't come from an API
@@ -158,7 +162,7 @@ because of a Dispatchly-side crash. Design, all results and the limits are in
 - [x] Endpoint registration, Standard Webhooks secrets, rotation-ready schema
 - [ ] Idempotent event ingestion with fan-out to subscribed endpoints
 - [x] Worker: SKIP LOCKED claiming with leases, fencing, signing, backoff + jitter, dead-letter
-- [ ] Replay API for dead deliveries
+- [x] Replay API for dead deliveries (single and bulk, same `webhook-id`, re-signed at send time)
 - [x] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [x] Security: API keys, SSRF guard incl. DNS rebinding, secret rotation, replay protection + receiver example
 - [ ] Secrets encrypted at rest, THREAT_MODEL.md
