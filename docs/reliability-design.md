@@ -32,10 +32,11 @@ Dedupe happens in two places:
 
 The event id, not the delivery id, is the right `webhook-id`: one event fanned out to two endpoints is two separate receivers, and each only dedupes its own stream.
 
+A reused key with a **different body** (`type` or `payload`) returns 422 instead of the old event, as Stripe does, so a key accidentally reused across two orders can't silently drop the second one. The bodies are compared as jsonb, so key order and whitespace don't count.
+
 Known gaps in ingestion, none blocking:
 
-- A reused key with a **different payload** silently returns the old event. Stripe returns an error in that case. Storing a hash of the request body and returning 422 on mismatch is cheap.
-- Keys are global and never expire. Fine with one tenant; scope them per API key once tenants exist.
+- Keys are global. Fine with one tenant; scope them per API key once tenants exist. A key lives as long as its event, so it can be reused once retention prunes that event (7 days by default).
 
 ## Durable queue
 
@@ -175,7 +176,7 @@ The reliability core above is small: one table change, one claim query, one retr
 | Area | Decision | Tradeoff accepted |
 | --- | --- | --- |
 | Guarantee | At-least-once, stable `webhook-id` = event id | Receivers must dedupe |
-| Ingestion | `Idempotency-Key` with `ON CONFLICT DO NOTHING` | Keys global, never expire |
+| Ingestion | `Idempotency-Key` with `ON CONFLICT DO NOTHING` | Keys global, expire with their event |
 | Queue | `deliveries` table, no broker | Lower throughput ceiling |
 | Claiming | `SKIP LOCKED` + 60 s lease, no open transaction during HTTP | A stalled worker can cause one duplicate send |
 | Fencing | `claim_token` UUID per claim | One extra column |
@@ -196,6 +197,6 @@ Schema changes this needs, in one migration:
 - [ ] Is an 8-hour retry window long enough? Stripe retries for up to three days. Longer means fewer dead letters but more pending rows; shorter leans on replay, which is easier to demo.
 - [ ] Should `410 Gone` dead-letter immediately and disable the endpoint, instead of retrying?
 - [ ] When an endpoint is deactivated, do its pending deliveries pause (claim query skips inactive endpoints) or go dead? Pausing seems safer.
-- [ ] Retention: how long to keep delivered rows and attempts before pruning, given free-tier storage limits?
+- [x] Retention: how long to keep delivered rows and attempts before pruning, given free-tier storage limits? 7 days (`RETENTION_DAYS`), in `src/retention.ts`. An event is deleted, with its deliveries and attempts, only once every delivery succeeded; pending and dead rows stay until they are delivered or replayed.
 - [x] Reject a reused `Idempotency-Key` with a different body (422)? Yes: same key with a different `type` or `payload` returns 422, compared as jsonb so key order and whitespace don't count. `scripts/check-events.sh` always resends the same body, so it is unaffected.
-- [ ] Which free host runs the worker around the clock, and does the worker share a process with the API (cheapest) or run separately?
+- [x] Which free host runs the worker around the clock, and does the worker share a process with the API (cheapest) or run separately? One process on a Render free web service, with Neon Postgres: see [deploy-stack.md](deploy-stack.md) and [deploy.md](deploy.md).

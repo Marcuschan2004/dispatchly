@@ -2,6 +2,7 @@ import { pool } from "./db.js";
 import { buildApp } from "./app.js";
 import { authDisabledFromEnv } from "./auth/api-keys.js";
 import { DeliveryWorker, workerConfigFromEnv } from "./delivery/worker.js";
+import { retentionConfigFromEnv, startRetention } from "./retention.js";
 import { checkSecretsReadable, secretCipherFromEnv } from "./security/encryption.js";
 
 // Refuses to start without a valid key (outside loopback dev) or with a key
@@ -16,6 +17,8 @@ const worker =
   process.env.RUN_WORKER === "true"
     ? new DeliveryWorker(pool, workerConfigFromEnv(), { cipher })
     : null;
+// Parsed before listening, so a bad RETENTION_DAYS fails the boot.
+const retention = worker ? retentionConfigFromEnv() : null;
 
 const authDisabled = authDisabledFromEnv();
 const app = await buildApp({
@@ -34,11 +37,14 @@ const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 await app.listen({ port, host });
 worker?.start();
+// Background jobs run wherever the worker runs.
+const stopRetention = retention ? startRetention(pool, retention) : null;
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     await app.close();
     await worker?.stop();
+    await stopRetention?.();
     await pool.end();
   });
 }

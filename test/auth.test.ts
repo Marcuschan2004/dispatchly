@@ -35,8 +35,9 @@ const listEndpoints = (headers: Record<string, string> = {}) =>
   app.inject({ method: "GET", url: "/endpoints", headers });
 
 describe("API key auth", () => {
-  test("every route except /health requires a key", async () => {
+  test("every route except /health and /livez requires a key", async () => {
     assert.equal((await app.inject({ method: "GET", url: "/health" })).statusCode, 200);
+    assert.equal((await app.inject({ method: "GET", url: "/livez" })).statusCode, 200);
 
     const routes = [
       ["GET", "/endpoints"],

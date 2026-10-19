@@ -266,6 +266,7 @@ Honest about what it doesn't do yet:
 - [Security delivery layer](docs/security-delivery.md): signing, replay protection, SSRF, rotation
 - [Chaos harness](docs/chaos-harness.md): fault injection, the verifier, all results
 - [Deploy stack](docs/deploy-stack.md): why Render and Neon, and why Postgres is the queue
+- [Deploy guide](docs/deploy.md): the steps to put it on Render and Neon
 
 CI runs typecheck, build, the test suite and `scripts/check-events.sh` against
 Postgres 16 on every push to main and every pull request.

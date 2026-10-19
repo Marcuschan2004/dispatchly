@@ -24,8 +24,14 @@ export async function buildApp(opts: AppOptions) {
   const { pool } = opts;
   const app = Fastify({ logger: opts.logger ?? false });
 
-  if (!opts.authDisabled) requireApiKey(app, { pool, public: ["/health"] });
+  if (!opts.authDisabled) requireApiKey(app, { pool, public: ["/health", "/livez"] });
 
+  // Liveness for keep-warm pings. It must not touch Postgres: a pinger
+  // hitting /health every few minutes would keep Neon from ever scaling to
+  // zero. (It is also public, so the API key lookup never runs either.)
+  app.get("/livez", async () => ({ ok: true }));
+
+  // Readiness: the process is up and can reach the database.
   app.get("/health", async () => {
     await pool.query("SELECT 1");
     return { ok: true };

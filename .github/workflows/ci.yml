@@ -51,13 +51,15 @@ jobs:
       # Tests create and reset their own dispatchly_test database.
       - run: npm test
 
-      # The docker compose volume loads the schema locally; here we load it
-      # by hand, then run the built server the way production does.
+      # Twice, the way Render runs it before every start: the second run
+      # must find nothing to do.
+      - run: npm run migrate && npm run migrate
+
+      # Run the built server the way production does.
       - name: Start API for check-events.sh
         env:
           AUTH_DISABLED: "true"
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/schema.sql
           nohup npm start > server.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf localhost:3000/health > /dev/null && exit 0
