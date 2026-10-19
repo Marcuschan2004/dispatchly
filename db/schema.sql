@@ -82,3 +82,18 @@ CREATE TABLE delivery_attempts (
 );
 
 CREATE INDEX delivery_attempts_delivery_idx ON delivery_attempts (delivery_id);
+
+-- API keys for the management API. Only a SHA-256 hash is stored: the full
+-- key is shown once at creation. Keys are 32 random bytes, so a fast hash is
+-- enough; slow hashes like bcrypt exist to protect low-entropy passwords.
+-- prefix is the first characters of the key, kept so a human can tell keys
+-- apart in listings and logs without ever seeing a usable key.
+CREATE TABLE api_keys (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  prefix        TEXT NOT NULL,
+  key_hash      BYTEA NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at  TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ                   -- NULL = active
+);

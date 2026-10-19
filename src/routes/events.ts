@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import type pg from "pg";
 import { z } from "zod";
-import { pool } from "../db.js";
 
 const CreateEvent = z.object({
   type: z.string().min(1),
@@ -9,8 +9,9 @@ const CreateEvent = z.object({
 
 export async function eventRoutes(
   app: FastifyInstance,
-  opts: { onDeliveriesCreated?: () => void }
+  opts: { pool: pg.Pool; onDeliveriesCreated?: () => void }
 ) {
+  const { pool } = opts;
   app.post("/events", async (req, reply) => {
     const parsed = CreateEvent.safeParse(req.body);
     if (!parsed.success) {
