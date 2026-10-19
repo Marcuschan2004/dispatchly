@@ -8,6 +8,8 @@ import { signatureHeader } from "../src/delivery/signing.js";
 import {
   createDelivery,
   createTestDatabase,
+  localPolicy,
+  localPolicyEnv,
   resetTables,
   sleep,
   startReceiver,
@@ -33,6 +35,7 @@ let receiver: Awaited<ReturnType<typeof startReceiver>>;
 function makeWorker(id: string, overrides: Partial<WorkerConfig> = {}) {
   return new DeliveryWorker(pool, workerConfig({ ...FAST, ...overrides }), {
     id,
+    egressPolicy: localPolicy(receiver.url),
     log: quiet,
   });
 }
@@ -59,6 +62,7 @@ function spawnWorker(): ChildProcess {
       env: {
         ...process.env,
         DATABASE_URL: testDatabaseUrl(),
+        ...localPolicyEnv(receiver.url),
         WORKER_LEASE_MS: String(FAST.leaseMs),
         WORKER_REQUEST_TIMEOUT_MS: String(FAST.requestTimeoutMs),
         WORKER_MAX_ATTEMPTS: String(FAST.maxAttempts),
@@ -225,7 +229,7 @@ describe("delivery", () => {
     await makeWorker("w1").tick();
     const d = await delivery(deliveryId);
     assert.equal(d.status, "pending");
-    assert.equal(d.last_error, "unsupported URL scheme file:");
+    assert.equal(d.last_error, "scheme file: is not allowed; use http or https");
   });
 });
 

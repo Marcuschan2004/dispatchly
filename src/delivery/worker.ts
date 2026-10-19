@@ -2,6 +2,14 @@ import type pg from "pg";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { z } from "zod";
+import { fetch, type Dispatcher, type Response } from "undici";
+import {
+  checkUrl,
+  createGuardedAgent,
+  egressPolicyFromEnv,
+  type EgressPolicy,
+  type Resolver,
+} from "../security/ssrf.js";
 import { backoffDelayMs, parseRetryAfterMs } from "./backoff.js";
 import { signatureHeader } from "./signing.js";
 
@@ -44,16 +52,6 @@ export function workerConfigFromEnv(env = process.env): WorkerConfig {
   });
 }
 
-// Runs before every attempt, not once at registration: DNS can change between
-// attempts. Throwing fails the attempt. The SSRF guard plugs in here.
-export type DestinationCheck = (url: URL) => void | Promise<void>;
-
-export const httpOnly: DestinationCheck = (url) => {
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`unsupported URL scheme ${url.protocol}`);
-  }
-};
-
 type Logger = (
   level: "info" | "warn" | "error",
   msg: string,
@@ -88,7 +86,8 @@ const SNIPPET_BYTES = 1024;
 
 export class DeliveryWorker {
   readonly id: string;
-  private readonly checkDestination: DestinationCheck;
+  private readonly egressPolicy: EgressPolicy;
+  private readonly dispatcher: Dispatcher;
   private readonly log: Logger;
   private stopping = false;
   private loop: Promise<void> | null = null;
@@ -98,10 +97,17 @@ export class DeliveryWorker {
   constructor(
     private readonly pool: pg.Pool,
     private readonly config: WorkerConfig,
-    opts: { id?: string; checkDestination?: DestinationCheck; log?: Logger } = {}
+    opts: {
+      id?: string;
+      egressPolicy?: EgressPolicy;
+      // Tests inject DNS answers to simulate rebinding.
+      resolve?: Resolver;
+      log?: Logger;
+    } = {}
   ) {
     this.id = opts.id ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
-    this.checkDestination = opts.checkDestination ?? httpOnly;
+    this.egressPolicy = opts.egressPolicy ?? egressPolicyFromEnv();
+    this.dispatcher = createGuardedAgent(this.egressPolicy, { resolve: opts.resolve });
     this.log = opts.log ?? jsonLogger;
   }
 
@@ -115,6 +121,7 @@ export class DeliveryWorker {
     this.stopping = true;
     this.wake();
     await this.loop;
+    await this.dispatcher.close();
   }
 
   // In-process signal from ingest: new deliveries exist, stop sleeping.
@@ -312,8 +319,10 @@ export class DeliveryWorker {
     const started = performance.now();
     const elapsed = () => Math.round(performance.now() - started);
     try {
+      // The URL host is re-checked on every attempt because an IP literal
+      // never reaches the guarded lookup, and the URL may predate the guard.
       const url = new URL(job.url);
-      await this.checkDestination(url);
+      checkUrl(url, this.egressPolicy);
       if (job.secrets.length === 0) throw new Error("endpoint has no active signing secret");
 
       const body = JSON.stringify({
@@ -339,6 +348,7 @@ export class DeliveryWorker {
         // address after the destination check passed.
         redirect: "manual",
         signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+        dispatcher: this.dispatcher,
       });
       const snippet = await readSnippet(res);
       const ok = res.status >= 200 && res.status < 300;
