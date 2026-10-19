@@ -144,4 +144,4 @@ Tunables (env): `WORKER_CONCURRENCY`, `WORKER_LEASE_MS`,
 - [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [x] Security: API keys, SSRF guard incl. DNS rebinding, secret rotation, replay protection + receiver example
 - [ ] Secrets encrypted at rest, THREAT_MODEL.md
-- [ ] Load test (k6), metrics, AWS deploy, CI
+- [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md)), CI
