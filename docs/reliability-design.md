@@ -32,9 +32,10 @@ Dedupe happens in two places:
 
 The event id, not the delivery id, is the right `webhook-id`: one event fanned out to two endpoints is two separate receivers, and each only dedupes its own stream.
 
+A reused key with a **different body** (`type` or `payload`) returns 422 instead of the old event, as Stripe does, so a key accidentally reused across two orders can't silently drop the second one. The bodies are compared as jsonb, so key order and whitespace don't count.
+
 Known gaps in ingestion, none blocking:
 
-- A reused key with a **different payload** silently returns the old event. Stripe returns an error in that case. Storing a hash of the request body and returning 422 on mismatch is cheap.
 - Keys are global. Fine with one tenant; scope them per API key once tenants exist. A key lives as long as its event, so it can be reused once retention prunes that event (7 days by default).
 
 ## Durable queue
