@@ -1,6 +1,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
@@ -41,6 +42,9 @@ describe("API key auth", () => {
       ["GET", "/endpoints"],
       ["POST", "/endpoints"],
       ["POST", "/events"],
+      ["GET", "/deliveries?status=dead"],
+      ["POST", `/deliveries/${randomUUID()}/replay`],
+      ["POST", `/endpoints/${randomUUID()}/replay`],
       ["GET", "/no-such-route"],
     ] as const;
     for (const [method, url] of routes) {
