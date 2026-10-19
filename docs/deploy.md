@@ -38,17 +38,20 @@ You don't need to load the schema yourself. The first deploy does it.
 
 ## 2. Generate the encryption key
 
-Endpoint signing secrets are encrypted at rest with `SECRET_ENCRYPTION_KEY`.
-On your Mac:
+Endpoint signing secrets are encrypted at rest with `SECRETS_ENCRYPTION_KEY`,
+the base64 of 32 random bytes. On your Mac:
 
 ```sh
 openssl rand -base64 32
 ```
 
 Store the output in your password manager too. If it is lost, every endpoint
-secret has to be rotated. (Check the format against the encryption at rest
-change before the first deploy; until that change is merged, the app ignores
-this variable.)
+secret has to be rotated.
+
+Deploy only once the encryption at rest change is merged into `main`. It
+changes how `db/schema.sql` stores secrets, and the first deploy freezes
+that file as the baseline: a database created before the change would need
+the separate `npm run encrypt-secrets` step run against Neon by hand.
 
 ## 3. Create the Render service from the Blueprint
 
@@ -57,11 +60,12 @@ this variable.)
    service named `dispatchly`.
 2. It asks for the two variables marked `sync: false`:
    - `DATABASE_URL`: the Neon string from step 1.
-   - `SECRET_ENCRYPTION_KEY`: the key from step 2.
+   - `SECRETS_ENCRYPTION_KEY`: the key from step 2.
 3. Click **Apply**. The first build takes a few minutes. In the deploy logs,
    look for `migrate: 0000_schema.sql: applied`, then `Server listening`.
 
-`HOST`, `RUN_WORKER` and `RETENTION_DAYS` come from `render.yaml`. To change
+`HOST`, `RUN_WORKER`, `RETENTION_DAYS` and `SECRETS_ENCRYPTION_KEY_VERSION`
+come from `render.yaml`. To change
 one, edit the file and push, so the repo stays the record. Don't set
 `AUTH_DISABLED`: the server refuses to start with it on a public `HOST`.
 

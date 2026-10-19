@@ -33,6 +33,10 @@ services:
       # Neon's direct (not -pooler) connection string, with sslmode=require.
       - key: DATABASE_URL
         sync: false
-      # Key that encrypts endpoint signing secrets at rest.
-      - key: SECRET_ENCRYPTION_KEY
+      # Key that encrypts endpoint signing secrets at rest (base64 of 32
+      # bytes). The server refuses to start without it on a public HOST.
+      - key: SECRETS_ENCRYPTION_KEY
         sync: false
+      # Bump together with a new key when rotating it.
+      - key: SECRETS_ENCRYPTION_KEY_VERSION
+        value: "1"
