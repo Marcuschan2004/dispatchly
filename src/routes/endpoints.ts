@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import { z } from "zod";
 import {
@@ -8,6 +7,12 @@ import {
   type EgressPolicy,
   type Resolver,
 } from "../security/ssrf.js";
+import {
+  MAX_LIVE_SECRETS,
+  MAX_OVERLAP_HOURS,
+  newSecret,
+  rotateSecret,
+} from "../security/secrets.js";
 
 const CreateEndpoint = z.object({
   // z.string().url() alone accepts file:, gopher: and metadata URLs; the
@@ -16,10 +21,13 @@ const CreateEndpoint = z.object({
   event_types: z.array(z.string().min(1)).default([]),
 });
 
-// Standard Webhooks secret format: "whsec_" + base64 of random bytes.
-function newSecret(): string {
-  return "whsec_" + randomBytes(32).toString("base64");
-}
+const RotateSecret = z
+  .object({
+    overlap_hours: z.number().int().min(0).max(MAX_OVERLAP_HOURS).default(24),
+  })
+  .strict();
+
+const EndpointId = z.object({ id: z.string().uuid() });
 
 export async function endpointRoutes(
   app: FastifyInstance,
@@ -66,5 +74,50 @@ export async function endpointRoutes(
        FROM endpoints ORDER BY created_at DESC`
     );
     return rows;
+  });
+
+  // Start a rotation. Returns the new secret once. Until the old secrets
+  // expire, every delivery carries one signature per live secret.
+  app.post("/endpoints/:id/secrets/rotate", async (req, reply) => {
+    const params = EndpointId.safeParse(req.params);
+    if (!params.success) return reply.code(404).send({ error: "endpoint not found" });
+    const body = RotateSecret.safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+
+    const result = await rotateSecret(pool, params.data.id, body.data.overlap_hours);
+    switch (result.kind) {
+      case "not_found":
+        return reply.code(404).send({ error: "endpoint not found" });
+      case "too_many_live":
+        return reply.code(409).send({
+          error:
+            `endpoint already has ${result.live} live secrets (max ${MAX_LIVE_SECRETS}); ` +
+            "wait for one to expire, or rotate with overlap_hours: 0 to revoke the old ones now",
+        });
+      case "rotated":
+        return reply.code(201).send({
+          id: result.id,
+          secret: result.secret,
+          created_at: result.created_at,
+          previous_secrets: result.previous,
+        });
+    }
+  });
+
+  // Secret metadata only: which secrets are live and when they expire.
+  app.get("/endpoints/:id/secrets", async (req, reply) => {
+    const params = EndpointId.safeParse(req.params);
+    if (!params.success) return reply.code(404).send({ error: "endpoint not found" });
+    const { rows } = await pool.query(
+      `SELECT s.id, s.created_at, s.expires_at
+       FROM endpoints e
+       LEFT JOIN endpoint_secrets s
+         ON s.endpoint_id = e.id AND (s.expires_at IS NULL OR s.expires_at > now())
+       WHERE e.id = $1
+       ORDER BY s.created_at DESC`,
+      [params.data.id]
+    );
+    if (rows.length === 0) return reply.code(404).send({ error: "endpoint not found" });
+    return rows.filter((r) => r.id !== null);
   });
 }

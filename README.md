@@ -25,6 +25,8 @@ dependency. The deliveries table is the queue.
     POST /endpoints   {"url": "...", "event_types": ["order.paid"]}  -> returns secret once
     GET  /endpoints
     POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional
+    POST /endpoints/:id/secrets/rotate  {"overlap_hours": 24}        -> returns new secret once
+    GET  /endpoints/:id/secrets                                      live secrets, metadata only
 
 Every route except `/health` needs `Authorization: Bearer <api key>`. Keys are
 created from the command line, because the first key can't come from an API
@@ -60,6 +62,20 @@ reach its own network. `src/security/ssrf.ts` checks in two places:
 Redirects are never followed; a 3xx is a failed attempt. For local demos,
 `ENDPOINT_ALLOW_HTTP`, `ENDPOINT_ALLOW_PORTS` and `ENDPOINT_ALLOW_IPS` open
 exceptions (see `.env.example`).
+
+## Secret rotation
+
+`POST /endpoints/:id/secrets/rotate` creates a new current secret and gives
+every older one an expiry `overlap_hours` from now (0 to 72, default 24).
+Until then each delivery carries one `v1,` signature per live secret, newest
+first, so a receiver can switch to the new secret whenever it likes without a
+single delivery failing. `overlap_hours: 0` is for a leaked secret: all older
+secrets stop working on the next delivery.
+
+Rotations of one endpoint run one at a time (`SELECT ... FOR UPDATE` on the
+endpoint row), and a partial unique index guarantees one current secret even
+if that logic breaks. An endpoint can have at most 3 live secrets, which keeps
+the signature header small.
 
 ## How delivery works
 
