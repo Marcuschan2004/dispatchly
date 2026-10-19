@@ -62,4 +62,4 @@ Tunables (env): `WORKER_CONCURRENCY`, `WORKER_LEASE_MS`,
 - [ ] Replay API for dead deliveries
 - [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [ ] Security: SSRF guard incl. DNS rebinding, secret rotation, replay protection, receiver SDK, THREAT_MODEL.md
-- [ ] Load test (k6), metrics, AWS deploy, CI
+- [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md)), CI
