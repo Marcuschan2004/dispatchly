@@ -84,7 +84,7 @@ export function requireApiKey(
   });
 }
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+export const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 // AUTH_DISABLED=true exists so local scripts can call the API without a key.
 // It only works on a loopback address: a server reachable from the network
