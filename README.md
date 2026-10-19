@@ -26,7 +26,8 @@ dependency. The deliveries table is the queue.
     GET  /health                                                     (no key needed)
     POST /endpoints   {"url": "...", "event_types": ["order.paid"]}  -> returns secret once
     GET  /endpoints
-    POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional
+    POST /events      {"type": "order.paid", "payload": {...}}       Idempotency-Key header optional;
+                                                                     reusing a key with another body -> 422
     POST /endpoints/:id/secrets/rotate  {"overlap_hours": 24}        -> returns new secret once
     GET  /endpoints/:id/secrets                                      live secrets, metadata only
 

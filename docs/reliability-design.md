@@ -187,5 +187,5 @@ Schema changes this needs, in one migration:
 - [ ] Should `410 Gone` dead-letter immediately and disable the endpoint, instead of retrying?
 - [ ] When an endpoint is deactivated, do its pending deliveries pause (claim query skips inactive endpoints) or go dead? Pausing seems safer.
 - [ ] Retention: how long to keep delivered rows and attempts before pruning, given free-tier storage limits?
-- [ ] Reject a reused `Idempotency-Key` with a different body (422)? This doesn't conflict with `scripts/check-events.sh`, which always resends the same body.
+- [x] Reject a reused `Idempotency-Key` with a different body (422)? Yes: same key with a different `type` or `payload` returns 422, compared as jsonb so key order and whitespace don't count. `scripts/check-events.sh` always resends the same body, so it is unaffected.
 - [ ] Which free host runs the worker around the clock, and does the worker share a process with the API (cheapest) or run separately?
