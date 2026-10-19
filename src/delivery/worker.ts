@@ -10,6 +10,7 @@ import {
   type EgressPolicy,
   type Resolver,
 } from "../security/ssrf.js";
+import { MAX_LIVE_SECRETS } from "../security/secrets.js";
 import { backoffDelayMs, parseRetryAfterMs } from "./backoff.js";
 import { signatureHeader } from "./signing.js";
 
@@ -217,7 +218,8 @@ export class DeliveryWorker {
               ARRAY(SELECT s.secret FROM endpoint_secrets s
                     WHERE s.endpoint_id = ep.id
                       AND (s.expires_at IS NULL OR s.expires_at > now())
-                    ORDER BY s.created_at DESC) AS secrets
+                    ORDER BY s.created_at DESC
+                    LIMIT ${MAX_LIVE_SECRETS}) AS secrets
        FROM claimed c
        JOIN events e ON e.id = c.event_id
        JOIN endpoints ep ON ep.id = c.endpoint_id`,
