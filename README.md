@@ -1,5 +1,7 @@
 # Dispatchly
 
+[![CI](https://github.com/Marcuschan2004/dispatchly/actions/workflows/ci.yml/badge.svg)](https://github.com/Marcuschan2004/dispatchly/actions/workflows/ci.yml)
+
 Webhook infrastructure with proven delivery guarantees and a real threat model.
 
 Register endpoints, send events, and Dispatchly delivers them: signed per the
@@ -144,4 +146,5 @@ Tunables (env): `WORKER_CONCURRENCY`, `WORKER_LEASE_MS`,
 - [ ] Reliability proof: chaos harness (worker kills, DB drops, flaky receiver) + delivery verifier
 - [x] Security: API keys, SSRF guard incl. DNS rebinding, secret rotation, replay protection + receiver example
 - [ ] Secrets encrypted at rest, THREAT_MODEL.md
-- [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md)), CI
+- [x] CI: typecheck, build, tests and `scripts/check-events.sh` against Postgres 16 on every push to main and every PR
+- [ ] Load test (k6), metrics, Render + Neon deploy ([decision](docs/deploy-stack.md))
