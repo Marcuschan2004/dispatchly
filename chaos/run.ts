@@ -53,6 +53,9 @@ const config = {
 // a full retry-to-dead cycle takes seconds instead of hours.
 const worker = {
   WORKER_CONCURRENCY: "50",
+  // Per endpoint, across all workers. Low enough that the cap is reached
+  // during bursts, high enough to keep up with the event rate.
+  WORKER_ENDPOINT_CONCURRENCY: "10",
   WORKER_LEASE_MS: "5000",
   WORKER_REQUEST_TIMEOUT_MS: "2000",
   WORKER_MAX_ATTEMPTS: "6",

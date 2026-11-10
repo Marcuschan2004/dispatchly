@@ -90,6 +90,25 @@ Every attempt also writes one row to a new `delivery_attempts` table (attempt nu
 
 On `SIGTERM` the worker stops claiming and lets in-flight requests finish. Anything it abandons is recovered by the lease anyway.
 
+### Per-endpoint fairness
+
+**Decision: cap how many deliveries one endpoint can have in flight (`WORKER_ENDPOINT_CONCURRENCY`, default 3 of the 10 slots).** Without it, the claim takes the oldest due rows, so an endpoint with a backlog of thousands of slow or hanging requests fills every slot and healthy endpoints wait up to the 10 s timeout per round. The chaos harness found the batch version of this (head-of-line blocking, fixed by refilling slots); the cap fixes the per-endpoint version.
+
+The claim query does it in SQL, so the cap counts every worker, not just one process:
+
+1. For each endpoint, count its in-flight rows: `pending`, `claim_token` set, lease not expired. A crashed worker's rows drop out when their lease expires, so a crash can't pin an endpoint at its cap.
+2. Offer at most `cap - in_flight` of that endpoint's oldest due rows (a `LATERAL ... LIMIT`), so a backlog of 10,000 costs a short index range, not a scan.
+3. Take the oldest offered rows across endpoints, `FOR UPDATE SKIP LOCKED`, and lease them exactly as before. The due conditions are repeated in that step so the row-lock recheck still rejects a row another worker just leased.
+
+The idle sleep had to change too. The old "sleep until `min(next_attempt_at)`" would see the capped endpoint's due rows and wake every 25 ms. Now a capped endpoint's due rows don't count; its next chance is when one of its requests finishes (which wakes the worker) or a lease expires.
+
+Tradeoffs:
+
+- **Not work-conserving.** If the slow endpoint is the only one with work, 7 of 10 slots sit idle. That's the point (the slots are kept free for anyone else), but one busy endpoint never gets more than 3 requests at a time, even when nothing else is waiting.
+- **Four slow endpoints still fill the pool.** With cap 3 and 10 slots, up to three hanging endpoints leave room for everyone else; a fourth takes the last slot. Per-endpoint queues with round-robin, or weighted fair queuing per tenant, would fix that and are overkill for a single-tenant free-tier service.
+- **Exact with one worker, approximate with several.** One worker claims one batch at a time. Concurrent claims from several workers usually see each other's locks, but a retry that commits between their snapshots can let an endpoint go a few over: the 4-worker chaos run peaked at 13 against a cap of 10. A strict cap would need claims serialized under an advisory lock in a transaction, which costs more round trips for little gain.
+- Two partial indexes (migration `0001`): `(endpoint_id, next_attempt_at, id)` on pending rows, and `(endpoint_id)` on in-flight rows.
+
 ## Retry policy
 
 **Decision: capped exponential backoff with full jitter.** After failed attempt *n*, the next attempt is scheduled at:
@@ -180,6 +199,7 @@ The reliability core above is small: one table change, one claim query, one retr
 | Queue | `deliveries` table, no broker | Lower throughput ceiling |
 | Claiming | `SKIP LOCKED` + 60 s lease, no open transaction during HTTP | A stalled worker can cause one duplicate send |
 | Fencing | `claim_token` UUID per claim | One extra column |
+| Fairness | Per-endpoint in-flight cap in the claim query (default 3 of 10) | Idle slots when one endpoint has all the work; approximate across workers |
 | Retry | Full jitter, base 30 s, cap 1 h, 15 attempts | Retry window varies (about 8 h worst case) |
 | Retryable | Every non-2xx, errors, timeouts; no redirects | Retries some permanent 4xx errors |
 | DLQ | `status = 'dead'`, same table | None worth noting |

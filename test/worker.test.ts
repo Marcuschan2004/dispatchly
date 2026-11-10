@@ -297,6 +297,118 @@ describe("head-of-line blocking", () => {
   });
 });
 
+describe("per-endpoint fairness", () => {
+  // More deliveries for an endpoint createDelivery already made.
+  async function addDeliveries(endpointId: string, n: number, payload: object) {
+    await pool.query(
+      `WITH ev AS (
+         INSERT INTO events (type, payload)
+         SELECT 'order.paid', $2::jsonb FROM generate_series(1, $3)
+         RETURNING id
+       )
+       INSERT INTO deliveries (event_id, endpoint_id) SELECT id, $1 FROM ev`,
+      [endpointId, payload, n]
+    );
+  }
+
+  test("a slow endpoint with a big backlog does not delay a healthy one", async () => {
+    const held: ServerResponse[] = [];
+    receiver.respond((req, res) => {
+      if (JSON.parse(req.body).data.slow) held.push(res);
+      else res.writeHead(200).end("ok");
+    });
+    const slow = await createDelivery(pool, receiver.url, { slow: true });
+    await addDeliveries(slow.endpointId, 29, { slow: true });
+    // Queued behind all 30 slow deliveries.
+    const healthy = await createDelivery(pool, receiver.url, { slow: false });
+
+    const worker = makeWorker("w1", {
+      concurrency: 4,
+      endpointConcurrency: 2,
+      requestTimeoutMs: 5000,
+      leaseMs: 10_000,
+    });
+    worker.start();
+    try {
+      // Without the cap, all four slots go to the slow endpoint's oldest rows
+      // and the healthy delivery waits out a 5 s timeout.
+      await waitFor(
+        "healthy delivery",
+        async () => (await delivery(healthy.deliveryId)).status === "delivered",
+        1000
+      );
+      await sleep(300);
+      assert.equal(held.length, 2, "the slow endpoint holds at most 2 slots");
+    } finally {
+      for (const res of held) res.writeHead(200).end();
+      await worker.stop();
+    }
+  });
+
+  // Steady state only: every row has the same next_attempt_at and nothing
+  // finishes, so all workers rank the rows the same way. Under churn the cap
+  // across workers is approximate (see claim()).
+  test("workers claiming at the same time share one cap", async () => {
+    const held: ServerResponse[] = [];
+    receiver.respond((_req, res) => held.push(res));
+    const slow = await createDelivery(pool, receiver.url);
+    await addDeliveries(slow.endpointId, 19, { n: 1 });
+
+    const opts = { concurrency: 5, endpointConcurrency: 2, requestTimeoutMs: 5000, leaseMs: 10_000 };
+    const workers = [1, 2, 3, 4].map((n) => makeWorker(`w${n}`, opts));
+    for (const w of workers) w.start();
+    try {
+      await waitFor("first requests", async () => held.length >= 2);
+      await sleep(500);
+      assert.equal(held.length, 2, "four workers, one endpoint, still 2 in flight");
+    } finally {
+      for (const res of held) res.writeHead(200).end();
+      await Promise.all(workers.map((w) => w.stop()));
+    }
+  });
+
+  test("waits instead of polling while the only due work is capped, and refills when a slot frees", async () => {
+    const held: ServerResponse[] = [];
+    receiver.respond((_req, res) => held.push(res));
+    const slow = await createDelivery(pool, receiver.url);
+    await addDeliveries(slow.endpointId, 9, { n: 1 });
+
+    const worker = makeWorker("w1", {
+      concurrency: 4,
+      endpointConcurrency: 2,
+      requestTimeoutMs: 5000,
+      leaseMs: 10_000,
+      maxIdleMs: 60_000,
+    });
+    let queries = 0;
+    const realQuery = pool.query.bind(pool);
+    (pool as any).query = (...args: any[]) => {
+      queries++;
+      return (realQuery as any)(...args);
+    };
+    worker.start();
+    try {
+      await waitFor("two requests", async () => held.length === 2);
+      await sleep(200);
+      const settled = queries;
+      await sleep(1000);
+      // Two slots are free and eight rows are due, but the endpoint is at its
+      // cap. Spinning on them would be a query every 25 ms.
+      assert.equal(queries, settled, "no queries while capped");
+      assert.equal(held.length, 2);
+
+      held[0].writeHead(200).end();
+      await waitFor("the freed slot to be refilled", async () => held.length === 3);
+      await sleep(300);
+      assert.equal(held.length, 3, "still at most 2 in flight");
+    } finally {
+      (pool as any).query = realQuery;
+      for (const res of held) if (!res.headersSent) res.writeHead(200).end();
+      await worker.stop();
+    }
+  });
+});
+
 describe("claiming", () => {
   test("concurrent workers never claim the same delivery", async () => {
     // Slow receiver so claims overlap with in-flight requests.
