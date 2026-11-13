@@ -96,11 +96,17 @@ your local database. The key is printed once; store it.
 
 ## 6. Keep it awake
 
-Render stops a free service after 15 minutes with no requests. On
-cron-job.org (free), create a job that sends `GET` to
-`https://dispatchly-xxxx.onrender.com/livez` every 10 minutes. While it is
-asleep, retries that come due wait until the next request wakes it; nothing
-is lost.
+Render stops a free service after 15 minutes with no requests.
+`.github/workflows/keep-warm.yml` sends `GET /livez` every 10 minutes from
+GitHub Actions, which is free for a public repo and needs no extra account.
+If you fork this, change the URL in that file to your own service.
+
+Two catches. GitHub can start scheduled runs late when it's busy, so the
+service may still fall asleep sometimes. And GitHub turns off scheduled
+workflows in a repo with no commits for 60 days; turn it back on from the
+Actions tab. While the service is asleep, retries that come due wait until
+the next request wakes it; nothing is lost. For tighter timing, a free
+cron-job.org job hitting the same URL works too.
 
 ## 7. Send a real webhook
 

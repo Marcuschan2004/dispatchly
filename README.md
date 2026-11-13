@@ -10,6 +10,11 @@ every subscribed endpoint, retrying until it succeeds or lands in a
 dead-letter queue you can replay. TypeScript, Fastify and Postgres 16.
 Postgres is the only dependency: the `deliveries` table is the queue.
 
+**Live:** https://dispatchly-5yii.onrender.com (Render free plan with Neon
+Postgres; [GET /health](https://dispatchly-5yii.onrender.com/health) checks
+the database). The first request after it has been idle can take about a
+minute while the free instance wakes up.
+
 ## What makes it different
 
 **Reliability you can check.** Once `POST /events` returns 2xx, every delivery
@@ -250,8 +255,11 @@ Honest about what it doesn't do yet:
   slots, so a slow endpoint can't block the others, but four slow endpoints
   still can. There is no per-tenant scheduler
   ([docs/reliability-design.md](docs/reliability-design.md#per-endpoint-fairness)).
-- **Not deployed.** It runs locally and in CI. The planned free-tier stack is
-  Render and Neon ([docs/deploy-stack.md](docs/deploy-stack.md)).
+- **Free-tier hosting.** The live instance runs on Render's free plan, which
+  sleeps when idle. A scheduled GitHub Actions job pings it every 10 minutes,
+  but GitHub sometimes starts those runs late, so the first request after a
+  quiet spell can take about a minute. Retries that come due while it sleeps
+  wait until it wakes; nothing is lost.
 - **Encryption at rest stops a leaked dump, not a compromised server.** The
   key sits in the environment next to `DATABASE_URL`, so anyone who can read
   the server's environment can decrypt. A KMS would fix that and is out of
