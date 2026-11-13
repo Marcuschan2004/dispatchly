@@ -246,8 +246,10 @@ Honest about what it doesn't do yet:
   above, Dispatchly's own crashes caused 19 extra copies, and 7 deliveries
   were dead-lettered even though the receiver had processed them, because its
   answers never got back to Dispatchly.
-- **No per-endpoint fairness.** One slow endpoint can hold every worker slot
-  for up to the 10 s timeout per request, delaying everyone else's webhooks.
+- **Fairness is a simple cap.** One endpoint gets at most 3 of the 10 worker
+  slots, so a slow endpoint can't block the others, but four slow endpoints
+  still can. There is no per-tenant scheduler
+  ([docs/reliability-design.md](docs/reliability-design.md#per-endpoint-fairness)).
 - **Not deployed.** It runs locally and in CI. The planned free-tier stack is
   Render and Neon ([docs/deploy-stack.md](docs/deploy-stack.md)).
 - **Encryption at rest stops a leaked dump, not a compromised server.** The

@@ -18,6 +18,12 @@ import { signatureHeader } from "../security/signing.js";
 const ConfigSchema = z
   .object({
     concurrency: z.coerce.number().int().positive().default(10),
+    // Most deliveries one endpoint may have in flight at once, counted across
+    // all workers (exact with one worker, approximate with several; see
+    // claim()). Without it, one endpoint with a big backlog of slow or
+    // hanging requests takes every slot and healthy endpoints wait behind it.
+    // A cap at or above `concurrency` turns it off.
+    endpointConcurrency: z.coerce.number().int().positive().default(3),
     leaseMs: z.coerce.number().int().positive().default(60_000),
     requestTimeoutMs: z.coerce.number().int().positive().default(10_000),
     maxAttempts: z.coerce.number().int().positive().default(15),
@@ -45,6 +51,7 @@ export function workerConfig(
 export function workerConfigFromEnv(env = process.env): WorkerConfig {
   return workerConfig({
     concurrency: env.WORKER_CONCURRENCY,
+    endpointConcurrency: env.WORKER_ENDPOINT_CONCURRENCY,
     leaseMs: env.WORKER_LEASE_MS,
     requestTimeoutMs: env.WORKER_REQUEST_TIMEOUT_MS,
     maxAttempts: env.WORKER_MAX_ATTEMPTS,
@@ -88,6 +95,14 @@ interface SendResult {
 }
 
 const SNIPPET_BYTES = 1024;
+
+// Deliveries to endpoint `ep` that a worker holds right now: claimed, result
+// not written, lease still live. A row whose worker crashed drops out when
+// its lease expires, so a crash can't pin an endpoint at its cap.
+const IN_FLIGHT_SQL = `
+  SELECT count(*)::int AS n FROM deliveries f
+  WHERE f.endpoint_id = ep.id AND f.status = 'pending'
+    AND f.claim_token IS NOT NULL AND f.next_attempt_at > now()`;
 
 export class DeliveryWorker {
   readonly id: string;
@@ -202,10 +217,29 @@ export class DeliveryWorker {
     });
   }
 
+  // When the next claim could succeed. A due row of an endpoint that is at
+  // its cap doesn't count, or the worker would query every 25 ms while a
+  // slow endpoint holds its slots. That endpoint's next chance is when one of
+  // its requests finishes (wake() from process()) or a lease runs out (its
+  // in-flight rows' next_attempt_at, which the min below includes).
   private async msUntilNextDue(): Promise<number> {
     const { rows } = await this.pool.query<{ ms: number | null }>(
-      `SELECT EXTRACT(EPOCH FROM (min(next_attempt_at) - now())) * 1000 AS ms
-       FROM deliveries WHERE status = 'pending'`
+      `SELECT EXTRACT(EPOCH FROM (min(n.at) - now())) * 1000 AS ms
+       FROM endpoints ep
+       CROSS JOIN LATERAL (${IN_FLIGHT_SQL}) busy
+       CROSS JOIN LATERAL (
+         -- Written as one range on deliveries_endpoint_due_idx, so a capped
+         -- endpoint's backlog of due rows is skipped, not read. ORDER BY
+         -- includes id to match that index; on next_attempt_at alone the
+         -- planner may walk deliveries_due_idx through every endpoint's rows.
+         SELECT d.next_attempt_at AS at FROM deliveries d
+         WHERE d.endpoint_id = ep.id AND d.status = 'pending'
+           AND d.next_attempt_at > CASE WHEN busy.n < $1 THEN '-infinity'::timestamptz
+                                        ELSE now() END
+         ORDER BY d.next_attempt_at, d.id
+         LIMIT 1
+       ) n`,
+      [this.config.endpointConcurrency]
     );
     const ms = rows[0].ms === null ? this.config.maxIdleMs : Number(rows[0].ms);
     // Floor of 25 ms: a due row another worker is mid-claim on is skipped by
@@ -218,14 +252,44 @@ export class DeliveryWorker {
   // (next_attempt_at pushed forward) is what keeps other workers away.
   // Claiming increments attempts, so a payload that crashes the worker every
   // time still reaches dead instead of looping forever.
+  //
+  // Fairness: each endpoint offers only its oldest (cap - in flight) due
+  // rows, and the oldest of those across endpoints win. A single worker
+  // claims one batch at a time, so with one worker the cap is exact. With
+  // several, two claims that overlap usually rank an endpoint's rows the same
+  // way and the loser skips the winner's locked rows, but a retry committed
+  // between their snapshots can rank differently and let the endpoint go a
+  // few over. That's fine for fairness; it is not a hard rate limit. The
+  // due conditions are repeated in `due` on purpose: when a row changed after
+  // this statement's snapshot, FOR UPDATE rechecks that WHERE against the
+  // row's latest version, which is what stops us from claiming a row another
+  // worker leased a moment ago.
   private async claim(limit: number): Promise<Job[]> {
     const { rows } = await this.pool.query<Job>(
-      `WITH due AS (
-         SELECT id FROM deliveries
-         WHERE status = 'pending' AND next_attempt_at <= now() AND attempts < $4
-         ORDER BY next_attempt_at
+      `WITH offered AS (
+         SELECT top.id
+         FROM endpoints ep
+         CROSS JOIN LATERAL (${IN_FLIGHT_SQL}) busy
+         -- The endpoint's first $5 due rows, ranked. LIMIT is the constant
+         -- cap and the in-flight count is applied by rank afterwards: with
+         -- LIMIT (cap - busy) the planner can't see the limit is small and
+         -- may scan the whole backlog instead of a short index range.
+         CROSS JOIN LATERAL (
+           SELECT d.id, row_number() OVER (ORDER BY d.next_attempt_at, d.id) AS rank
+           FROM deliveries d
+           WHERE d.endpoint_id = ep.id AND d.status = 'pending'
+             AND d.next_attempt_at <= now() AND d.attempts < $4
+           ORDER BY d.next_attempt_at, d.id
+           LIMIT $5
+         ) top
+         WHERE top.rank <= $5 - busy.n
+       ), due AS (
+         SELECT d.id FROM deliveries d
+         WHERE d.id IN (SELECT id FROM offered)
+           AND d.status = 'pending' AND d.next_attempt_at <= now() AND d.attempts < $4
+         ORDER BY d.next_attempt_at, d.id
          LIMIT $1
-         FOR UPDATE SKIP LOCKED
+         FOR UPDATE OF d SKIP LOCKED
        ), claimed AS (
          UPDATE deliveries d
          SET attempts        = d.attempts + 1,
@@ -260,7 +324,7 @@ export class DeliveryWorker {
        FROM claimed c
        JOIN events e ON e.id = c.event_id
        JOIN endpoints ep ON ep.id = c.endpoint_id`,
-      [limit, this.config.leaseMs, this.id, this.config.maxAttempts]
+      [limit, this.config.leaseMs, this.id, this.config.maxAttempts, this.config.endpointConcurrency]
     );
     return rows;
   }
