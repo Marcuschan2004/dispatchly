@@ -1,0 +1,20 @@
+name: Keep warm
+
+# Render stops a free service after 15 minutes without a request. This pings
+# /livez, which never queries Postgres, so Neon can still scale to zero.
+# GitHub may start scheduled runs late under load, so the service can still
+# fall asleep now and then; nothing is lost when it does (see docs/deploy.md).
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      # A cold start takes about a minute, so allow two.
+      - run: curl --fail --silent --show-error --max-time 120 --retry 2 https://dispatchly-5yii.onrender.com/livez
