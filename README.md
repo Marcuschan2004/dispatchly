@@ -276,11 +276,13 @@ Honest about what it doesn't do yet:
   still can. There is no per-tenant scheduler
   ([docs/reliability-design.md](docs/reliability-design.md#per-endpoint-fairness)).
 - **Free-tier hosting.** The live instance runs on Render's free plan, which
-  sleeps after 15 idle minutes. A GitHub Actions job is scheduled to ping it
-  every 10 minutes, but GitHub throttles schedules on quiet repos: in
-  November 2026 the pings actually ran a median of 6.8 hours apart, so the
-  service is usually asleep and the first request waits about a minute.
-  Retries that come due while it sleeps wait until it wakes; nothing is lost.
+  sleeps after 15 idle minutes. UptimeRobot (free) pings `/livez` every 5
+  minutes to keep it awake; `/livez` never touches Postgres, so Neon can
+  still scale to zero. A GitHub Actions ping stays as a backup, but GitHub
+  throttles schedules on quiet repos (a median of 6.8 hours apart in
+  November 2026), so it can't keep the service awake on its own. If the
+  service does sleep, retries that come due wait until it wakes; nothing is
+  lost.
 - **Encryption at rest stops a leaked dump, not a compromised server.** The
   key sits in the environment next to `DATABASE_URL`, so anyone who can read
   the server's environment can decrypt. A KMS would fix that and is out of
