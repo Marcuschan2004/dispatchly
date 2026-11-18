@@ -5,6 +5,7 @@ import { deliveryRoutes } from "./routes/deliveries.js";
 import { endpointRoutes } from "./routes/endpoints.js";
 import { eventRoutes } from "./routes/events.js";
 import { landingRoutes } from "./landing.js";
+import type { Metrics } from "./metrics.js";
 import { secretCipherFromEnv, type SecretCipher } from "./security/encryption.js";
 import { egressPolicyFromEnv, type EgressPolicy, type Resolver } from "./security/ssrf.js";
 
@@ -18,6 +19,8 @@ export interface AppOptions {
   egressPolicy?: EgressPolicy;
   resolve?: Resolver;
   cipher?: SecretCipher;
+  // Serves GET /metrics (behind the API key) when set.
+  metrics?: Metrics;
 }
 
 // Builds the API without listening, so tests can drive it with app.inject().
@@ -40,6 +43,16 @@ export async function buildApp(opts: AppOptions) {
     await pool.query("SELECT 1");
     return { ok: true };
   });
+
+  const metrics = opts.metrics;
+  if (metrics) {
+    // Needs a key like any other route: a scrape queries Postgres, so an
+    // anonymous caller must not be able to trigger it or read queue sizes.
+    app.get("/metrics", async (_req, reply) => {
+      const body = await metrics.registry.metrics();
+      return reply.type(metrics.registry.contentType).send(body);
+    });
+  }
 
   await app.register(endpointRoutes, {
     pool,

@@ -2,6 +2,7 @@ import { pool } from "./db.js";
 import { buildApp } from "./app.js";
 import { authDisabledFromEnv } from "./auth/api-keys.js";
 import { DeliveryWorker, workerConfigFromEnv } from "./delivery/worker.js";
+import { createMetrics } from "./metrics.js";
 import { retentionConfigFromEnv, startRetention } from "./retention.js";
 import { checkSecretsReadable, secretCipherFromEnv } from "./security/encryption.js";
 
@@ -13,9 +14,10 @@ await checkSecretsReadable(pool, cipher);
 // RUN_WORKER=true runs the delivery worker in this process (one free-tier
 // service instead of two). Ingest then wakes it the moment deliveries exist,
 // so it can sleep through idle periods without polling.
+const metrics = createMetrics(pool);
 const worker =
   process.env.RUN_WORKER === "true"
-    ? new DeliveryWorker(pool, workerConfigFromEnv(), { cipher })
+    ? new DeliveryWorker(pool, workerConfigFromEnv(), { cipher, metrics })
     : null;
 // Parsed before listening, so a bad RETENTION_DAYS fails the boot.
 const retention = worker ? retentionConfigFromEnv() : null;
@@ -26,6 +28,7 @@ const app = await buildApp({
   authDisabled,
   logger: true,
   cipher,
+  metrics,
   onDeliveriesCreated: () => worker?.wake(),
 });
 if (authDisabled) app.log.warn("AUTH_DISABLED=true: the API accepts requests without a key");

@@ -231,6 +231,7 @@ manage keys.
 | --- | --- | --- |
 | `GET /` | | The public front page (HTML), no key needed, no database query |
 | `GET /health` | | 200 if Postgres answers, no key needed |
+| `GET /metrics` | | Prometheus metrics (see below) |
 | `POST /endpoints` | `{"url", "event_types": []}` (empty means all types) | 201 with the signing secret, shown once; 400 if the SSRF guard blocks the URL |
 | `GET /endpoints` | | Endpoints, never secrets |
 | `POST /events` | `{"type", "payload": {}}`, optional `Idempotency-Key` header | 201 new, 200 same key and body, 422 same key with another body |
@@ -242,6 +243,25 @@ manage keys.
 
 Each webhook is a POST with a JSON body `{"type", "timestamp", "data"}` and
 the headers `webhook-id`, `webhook-timestamp` and `webhook-signature`.
+
+## Observability
+
+`GET /metrics` serves Prometheus metrics and needs an API key like any other
+route (Prometheus sends it with `authorization: {credentials: dk_...}`).
+
+| Metric | What it tells you |
+| --- | --- |
+| `dispatchly_deliveries{status}` | Pending, delivered and dead (the dead-letter queue) |
+| `dispatchly_deliveries_due` | Backlog: pending deliveries whose retry time has passed |
+| `dispatchly_oldest_due_delivery_age_seconds` | Delivery lag. The number to alert on: if it keeps growing, workers aren't keeping up |
+| `dispatchly_delivery_attempts_total{outcome}` | `delivered`, `retry`, `dead`, `lease_lost` (dropped by the fence), `record_failed` |
+| `dispatchly_delivery_attempt_duration_seconds{result}` | Receiver latency histogram, success vs failure |
+
+The queue gauges come from one Postgres query per scrape, so they are right
+however many worker processes there are. Attempt counters and latency are
+counted in memory by the worker in the API process (`RUN_WORKER=true`); a
+standalone worker doesn't serve `/metrics`. Each scrape queries Postgres, so
+scraping every 15 seconds keeps a scale-to-zero database awake.
 
 ## Limits
 

@@ -1,3 +1,4 @@
+import type { Metrics } from "../metrics.js";
 import type pg from "pg";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -110,6 +111,7 @@ export class DeliveryWorker {
   private readonly dispatcher: Dispatcher;
   private readonly log: Logger;
   private readonly cipher: SecretCipher;
+  private readonly metrics: Metrics | null;
   private stopping = false;
   private loop: Promise<void> | null = null;
   private woken = false;
@@ -125,6 +127,8 @@ export class DeliveryWorker {
       resolve?: Resolver;
       log?: Logger;
       cipher?: SecretCipher;
+      // Attempt counts and latency for GET /metrics, when this process serves it.
+      metrics?: Metrics;
     } = {}
   ) {
     this.id = opts.id ?? `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
@@ -132,6 +136,7 @@ export class DeliveryWorker {
     this.dispatcher = createGuardedAgent(this.egressPolicy, { resolve: opts.resolve });
     this.log = opts.log ?? jsonLogger;
     this.cipher = opts.cipher ?? secretCipherFromEnv();
+    this.metrics = opts.metrics ?? null;
   }
 
   start(): void {
@@ -402,7 +407,9 @@ export class DeliveryWorker {
           outcome,
         ]
       );
-      if (!rows[0]?.owned) {
+      const owned = rows[0]?.owned ?? false;
+      this.metrics?.recordAttempt(owned ? outcome : "lease_lost", result.durationMs, result.ok);
+      if (!owned) {
         this.log("warn", "lease lost before result was recorded; another worker owns this delivery", {
           delivery_id: job.id,
           attempt: job.attempt,
@@ -411,6 +418,7 @@ export class DeliveryWorker {
     } catch (err) {
       // The row keeps its lease and becomes due again when it expires, so a
       // failed write here costs a duplicate send, never a lost event.
+      this.metrics?.recordAttempt("record_failed", result.durationMs, result.ok);
       this.log("error", "failed to record attempt result", {
         delivery_id: job.id,
         error: String(err),
