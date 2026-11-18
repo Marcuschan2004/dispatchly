@@ -10,10 +10,10 @@ every subscribed endpoint, retrying until it succeeds or lands in a
 dead-letter queue you can replay. TypeScript, Fastify and Postgres 16.
 Postgres is the only dependency: the `deliveries` table is the queue.
 
-**Live:** https://dispatchly-5yii.onrender.com (Render free plan with Neon
-Postgres; [GET /health](https://dispatchly-5yii.onrender.com/health) checks
-the database). The first request after it has been idle can take about a
-minute while the free instance wakes up.
+**Live:** https://dispatchly-5yii.onrender.com, a public page with the
+results and a live status check (Render free plan with Neon Postgres). The
+API behind it needs a key. If the service has been idle, the first request
+takes about a minute while the free instance wakes up.
 
 ## What makes it different
 
@@ -31,8 +31,7 @@ rest.
 
 ## Chaos results
 
-Output of `npm run chaos` on a MacBook Pro (Apple silicon), run
-2026-10-19T22-28-38-110Z:
+Output of `npm run chaos` on a MacBook Pro (Apple silicon), October 19, 2026:
 
 **PASS**: 0 of 3,000 deliveries missing (1,000 accepted events x 3 endpoints).
 
@@ -230,7 +229,8 @@ manage keys.
 
 | Method and path | Body or query | Returns |
 | --- | --- | --- |
-| `GET /health` | | 200, no key needed |
+| `GET /` | | The public front page (HTML), no key needed, no database query |
+| `GET /health` | | 200 if Postgres answers, no key needed |
 | `POST /endpoints` | `{"url", "event_types": []}` (empty means all types) | 201 with the signing secret, shown once; 400 if the SSRF guard blocks the URL |
 | `GET /endpoints` | | Endpoints, never secrets |
 | `POST /events` | `{"type", "payload": {}}`, optional `Idempotency-Key` header | 201 new, 200 same key and body, 422 same key with another body |
@@ -256,10 +256,11 @@ Honest about what it doesn't do yet:
   still can. There is no per-tenant scheduler
   ([docs/reliability-design.md](docs/reliability-design.md#per-endpoint-fairness)).
 - **Free-tier hosting.** The live instance runs on Render's free plan, which
-  sleeps when idle. A scheduled GitHub Actions job pings it every 10 minutes,
-  but GitHub sometimes starts those runs late, so the first request after a
-  quiet spell can take about a minute. Retries that come due while it sleeps
-  wait until it wakes; nothing is lost.
+  sleeps after 15 idle minutes. A GitHub Actions job is scheduled to ping it
+  every 10 minutes, but GitHub throttles schedules on quiet repos: in
+  November 2026 the pings actually ran a median of 6.8 hours apart, so the
+  service is usually asleep and the first request waits about a minute.
+  Retries that come due while it sleeps wait until it wakes; nothing is lost.
 - **Encryption at rest stops a leaked dump, not a compromised server.** The
   key sits in the environment next to `DATABASE_URL`, so anyone who can read
   the server's environment can decrypt. A KMS would fix that and is out of
@@ -269,6 +270,10 @@ Honest about what it doesn't do yet:
 - **Chaos testing is statistical.** One machine, loopback network, random
   faults. It finds common races, not one-in-a-million interleavings; those
   have targeted tests, like the SIGSTOP fencing test in `test/worker.test.ts`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Design docs
 

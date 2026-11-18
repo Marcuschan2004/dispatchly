@@ -4,6 +4,7 @@ import { requireApiKey } from "./auth/api-keys.js";
 import { deliveryRoutes } from "./routes/deliveries.js";
 import { endpointRoutes } from "./routes/endpoints.js";
 import { eventRoutes } from "./routes/events.js";
+import { landingRoutes } from "./landing.js";
 import { secretCipherFromEnv, type SecretCipher } from "./security/encryption.js";
 import { egressPolicyFromEnv, type EgressPolicy, type Resolver } from "./security/ssrf.js";
 
@@ -24,7 +25,10 @@ export async function buildApp(opts: AppOptions) {
   const { pool } = opts;
   const app = Fastify({ logger: opts.logger ?? false });
 
-  if (!opts.authDisabled) requireApiKey(app, { pool, public: ["/health", "/livez"] });
+  if (!opts.authDisabled) requireApiKey(app, { pool, public: ["/", "/health", "/livez"] });
+
+  // The front page for anyone who opens the live URL. No database access.
+  landingRoutes(app);
 
   // Liveness for keep-warm pings. It must not touch Postgres: a pinger
   // hitting /health every few minutes would keep Neon from ever scaling to
