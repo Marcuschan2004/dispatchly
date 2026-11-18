@@ -104,11 +104,14 @@ If you fork this, change the URL in that file to your own service.
 Two catches. GitHub throttles scheduled workflows on repos with little
 activity, and on this repo the pings ran a median of 6.8 hours apart
 (November 2026), so on its own this job does not keep the service awake.
-And GitHub turns off scheduled workflows in a repo with no commits for 60 days; turn it back on from the
-Actions tab. While the service is asleep, retries that come due wait until
-the next request wakes it; nothing is lost. To actually keep it warm, point a free
-external pinger (cron-job.org or UptimeRobot, both free) at `/livez` every
-10 minutes. Use `/livez`, not `/` or `/health`, so Neon can still sleep.
+And GitHub turns off scheduled workflows in a repo with no commits for 60
+days; turn it back on from the Actions tab.
+
+What actually keeps it warm is a free external pinger. The live instance
+uses an UptimeRobot HTTP monitor on `/livez` every 5 minutes, which also
+emails you if the service goes down. Use `/livez`, not `/` or `/health`, so
+Neon can still sleep. While the service is asleep, retries that come due
+wait until the next request wakes it; nothing is lost.
 
 ## 7. Send a real webhook
 
